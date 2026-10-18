@@ -331,6 +331,7 @@ export default function App() {
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState('');
   const [blobUploadNotice, setBlobUploadNotice] = useState('');
+  const [blobUploadHasError, setBlobUploadHasError] = useState(false);
   const [blobSyncStatus, setBlobSyncStatus] = useState<
     'idle' | 'checking' | 'connected' | 'not_connected' | 'syncing' | 'synced' | 'error'
   >('idle');
@@ -593,10 +594,10 @@ export default function App() {
     setActiveModal(null);
   };
 
-  // Upload single file directly to Vercel Blob (or fallback to local base64)
+  // Upload images and videos to Cloudinary; keep PDF files in Vercel Blob.
   const uploadSingleFile = async (
     file: File
-  ): Promise<{ media: ProjectMedia; isBlob: boolean }> => {
+  ): Promise<{ media: ProjectMedia; storage: 'cloudinary' | 'blob' }> => {
     let type: MediaType = 'foto';
     if (file.type.startsWith('video/')) {
       type = 'video';
@@ -605,12 +606,113 @@ export default function App() {
       file.name.toLowerCase().endsWith('.pdf')
     ) {
       type = 'pdf';
+    } else if (!file.type.startsWith('image/')) {
+      throw new Error(`Formato no compatible: ${file.name}`);
     }
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+
+    if (type !== 'pdf') {
+      setUploadProgressText(`Preparando subida a Cloudinary: ${file.name}...`);
+      const signatureResponse = await fetch('/api/cloudinary-signature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resourceType: type === 'video' ? 'video' : 'image' }),
+      });
+      const signatureData: {
+        apiKey: string;
+        timestamp: number;
+        folder: string;
+        public_id: string;
+        signature: string;
+        cloudName: string;
+        resourceType: 'image' | 'video';
+        error?: string;
+      } | null = await signatureResponse.json().catch(() => null);
+      if (
+        !signatureResponse.ok ||
+        !signatureData ||
+        typeof signatureData.apiKey !== 'string' ||
+        typeof signatureData.timestamp !== 'number' ||
+        typeof signatureData.folder !== 'string' ||
+        typeof signatureData.public_id !== 'string' ||
+        typeof signatureData.signature !== 'string' ||
+        typeof signatureData.cloudName !== 'string' ||
+        (signatureData.resourceType !== 'image' && signatureData.resourceType !== 'video')
+      ) {
+        throw new Error(
+          signatureData?.error ||
+            `No se pudo iniciar la subida a Cloudinary (HTTP ${signatureResponse.status}).`
+        );
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('api_key', signatureData.apiKey);
+      formData.append('timestamp', String(signatureData.timestamp));
+      formData.append('folder', signatureData.folder);
+      formData.append('public_id', signatureData.public_id);
+      formData.append('signature', signatureData.signature);
+
+      const { cloudName, resourceType } = signatureData;
+      const cloudinaryResponse = await new Promise<{ secure_url: string }>(
+        (resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open(
+            'POST',
+            `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/${resourceType}/upload`
+          );
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              setUploadProgressText(
+                `Subiendo a Cloudinary ${file.name}: ${Math.round((event.loaded / event.total) * 100)}%`
+              );
+            }
+          };
+          xhr.onload = () => {
+            let response: {
+              secure_url?: string;
+              error?: { message?: string };
+            };
+            try {
+              response = JSON.parse(xhr.responseText);
+            } catch {
+              reject(
+                new Error(`Cloudinary devolvió una respuesta inválida (HTTP ${xhr.status}).`)
+              );
+              return;
+            }
+            if (xhr.status < 200 || xhr.status >= 300 || !response.secure_url) {
+              reject(
+                new Error(
+                  response.error?.message ||
+                    `Cloudinary rechazó el archivo (HTTP ${xhr.status}).`
+                )
+              );
+              return;
+            }
+            resolve({ secure_url: response.secure_url });
+          };
+          xhr.onerror = () => reject(new Error('No se pudo conectar con Cloudinary.'));
+          xhr.send(formData);
+        }
+      );
+
+      return {
+        media: {
+          id: Date.now().toString() + Math.random().toString().slice(2, 6),
+          type,
+          name: file.name,
+          url: cloudinaryResponse.secure_url,
+          size: sizeInMb,
+        },
+        storage: 'cloudinary',
+      };
+    }
 
     const activeToken = (
       customBlobToken || localStorage.getItem('sr_vercel_blob_token') || ''
     ).trim();
+    let blobUploadError: unknown;
 
     try {
       const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -620,7 +722,7 @@ export default function App() {
         multipart: file.size > 20 * 1024 * 1024,
         headers: activeToken ? { 'x-blob-token': activeToken } : undefined,
         onUploadProgress: ({ percentage }) => {
-          setUploadProgressText(`Subiendo ${file.name}: ${Math.round(percentage)}%`);
+          setUploadProgressText(`Subiendo PDF a Vercel Blob: ${Math.round(percentage)}%`);
         },
       });
       return {
@@ -631,10 +733,10 @@ export default function App() {
           url: blob.url,
           size: sizeInMb,
         },
-        isBlob: true,
+        storage: 'blob',
       };
     } catch (clientUploadErr) {
-      // Método Server Upload directo (para archivos <= 4.5 MB como imágenes o avatares)
+      blobUploadError = clientUploadErr;
       if (file.size <= 4.5 * 1024 * 1024) {
         try {
           const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
@@ -646,82 +748,75 @@ export default function App() {
               body: file,
             }
           );
-          if (serverRes.ok) {
-            const serverBlob = await serverRes.json();
-            if (serverBlob && serverBlob.url) {
-              return {
-                media: {
-                  id: Date.now().toString() + Math.random().toString().slice(2, 6),
-                  type,
-                  name: file.name,
-                  url: serverBlob.url,
-                  size: sizeInMb,
-                },
-                isBlob: true,
-              };
-            }
+          const serverResponse = await serverRes.json().catch(() => null);
+          if (serverRes.ok && serverResponse?.url) {
+            return {
+              media: {
+                id: Date.now().toString() + Math.random().toString().slice(2, 6),
+                type,
+                name: file.name,
+                url: serverResponse.url,
+                size: sizeInMb,
+              },
+              storage: 'blob',
+            };
+          }
+          if (serverResponse?.error) {
+            blobUploadError = new Error(serverResponse.error);
           }
         } catch (serverErr) {
-          console.warn('Server upload fallback failed:', serverErr);
+          blobUploadError = serverErr;
         }
       }
-      console.warn('Subida a Vercel Blob no completada:', clientUploadErr);
     }
 
-    // 2. Fallback de lectura local (previsualización si no hay conexión con Vercel)
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        resolve({
-          media: {
-            id: Date.now().toString() + Math.random().toString().slice(2, 6),
-            type,
-            name: file.name,
-            url: reader.result as string,
-            size: sizeInMb,
-          },
-          isBlob: false,
-        });
-      };
-      reader.readAsDataURL(file);
-    });
+    throw new Error(
+      `No se pudo guardar ${file.name} en Vercel Blob: ${
+        blobUploadError instanceof Error
+          ? blobUploadError.message
+          : 'comprueba el token y el espacio disponible.'
+      }`
+    );
   };
 
-  // Convert File to ProjectMedia with progress tracking and automatic Vercel Blob storage
+  // Upload project media to Cloudinary or Vercel Blob according to file type.
   const processFiles = async (files: FileList): Promise<ProjectMedia[]> => {
     setIsUploadingMedia(true);
     setUploadProgressText(`Preparando subida de ${files.length} archivo(s)...`);
     const results: ProjectMedia[] = [];
+    const errors: string[] = [];
+    let cloudinaryCount = 0;
     let blobCount = 0;
 
     for (let i = 0; i < files.length; i++) {
-      const f = files[i];
+      const file = files[i];
       setUploadProgressText(
-        `Subiendo a la nube (${i + 1}/${files.length}): ${f.name} (${(f.size / (1024 * 1024)).toFixed(1)} MB)...`
+        `Subiendo (${i + 1}/${files.length}): ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)...`
       );
       try {
-        const { media, isBlob } = await uploadSingleFile(f);
+        const { media, storage } = await uploadSingleFile(file);
         results.push(media);
-        if (isBlob) blobCount++;
-      } catch (err) {
-        console.error('Error procesando archivo:', err);
+        if (storage === 'cloudinary') cloudinaryCount++;
+        else blobCount++;
+      } catch (error) {
+        errors.push(
+          error instanceof Error ? error.message : `Error al subir ${file.name}.`
+        );
       }
     }
 
     setIsUploadingMedia(false);
     setUploadProgressText('');
 
-    if (blobCount > 0) {
-      setBlobUploadNotice(
-        `✓ ¡${blobCount} archivo(s) guardado(s) permanentemente en Vercel Blob!`
-      );
-      setTimeout(() => setBlobUploadNotice(''), 5000);
-    } else {
-      setBlobUploadNotice(
-        `📁 Archivos cargados. Al desplegar en Vercel con Blob activado o con token, se almacenarán en la nube automáticamente.`
-      );
-      setTimeout(() => setBlobUploadNotice(''), 6000);
+    const messages: string[] = [];
+    if (cloudinaryCount) {
+      messages.push(`${cloudinaryCount} archivo(s) guardado(s) en Cloudinary`);
     }
+    if (blobCount) messages.push(`${blobCount} PDF(s) guardado(s) en Vercel Blob`);
+    messages.push(...errors);
+    setBlobUploadNotice(messages.length ? messages.join('. ') : 'No se guardó ningún archivo.');
+    setBlobUploadHasError(errors.length > 0 || messages.length === 0);
+    setTimeout(() => setBlobUploadNotice(''), errors.length ? 10000 : 6000);
 
     return results;
   };
@@ -1151,7 +1246,9 @@ export default function App() {
       setFormCover(media.url);
     } catch (err) {
       console.error('Error subiendo portada:', err);
-      setCoverError('No se pudo subir la portada. Inténtalo de nuevo.');
+      setCoverError(
+        err instanceof Error ? err.message : 'No se pudo subir la portada. Inténtalo de nuevo.'
+      );
     } finally {
       setIsUploadingCover(false);
     }
@@ -1964,16 +2061,21 @@ export default function App() {
                           setIsUploadingMedia(true);
                           setUploadProgressText(`Subiendo CV a Vercel Blob: ${file.name}...`);
                           try {
-                            const { media, isBlob } = await uploadSingleFile(file);
+                            const { media } = await uploadSingleFile(file);
                             setCvPdfUrl(media.url);
-                            if (isBlob) {
-                              setBlobUploadNotice('✓ ¡CV PDF guardado permanentemente en Vercel Blob!');
-                            } else {
-                              setBlobUploadNotice('✓ CV cargado en vista previa.');
-                            }
+                            setBlobUploadHasError(false);
+                            setBlobUploadNotice(
+                              '✓ ¡CV PDF guardado permanentemente en Vercel Blob!'
+                            );
                             setTimeout(() => setBlobUploadNotice(''), 4500);
                           } catch (err) {
                             console.error('Error al subir CV:', err);
+                            setBlobUploadHasError(true);
+                            setBlobUploadNotice(
+                              err instanceof Error
+                                ? err.message
+                                : 'No se pudo guardar el CV en Vercel Blob.'
+                            );
                           } finally {
                             setIsUploadingMedia(false);
                             setUploadProgressText('');
@@ -2042,7 +2144,24 @@ export default function App() {
                     </div>
                   </div>
                   <p className="text-xs sm:text-sm text-white/80 leading-relaxed mt-2">
-                    <strong>Vercel Blob</strong> es el almacenamiento en la nube oficial de Vercel. Funciona como un disco duro global de altísima velocidad: cuando subes una foto, un vídeo o un PDF desde tu panel de administrador, el archivo <strong>no se queda atrapado en tu navegador</strong>, sino que <strong>vuela de inmediato a los servidores de Vercel Blob</strong>, generando una URL pública y permanente (<code className="text-white/90 bg-white/10 px-1 py-0.5 rounded">https://...public.blob.vercel-storage.com/...</code>).
+                    <strong>Vercel Blob</strong> guarda el JSON del portafolio y los PDF, incluido el CV. Las fotos, videos y portadas se suben a <strong>Cloudinary</strong> para no consumir la cuota de medios de Blob.
+                  </p>
+                </div>
+
+                <div className="bg-neutral-900 border border-amber-500/30 rounded-xl p-5 space-y-3">
+                  <h4 className="text-sm font-semibold text-white">
+                    Configurar Cloudinary para fotos y videos
+                  </h4>
+                  <p className="text-xs text-white/70 leading-relaxed">
+                    En Vercel, abre tu proyecto y entra a <strong>Settings → Environment Variables</strong>. Agrega las tres variables de abajo usando los valores de tu cuenta Cloudinary; luego vuelve a desplegar. No pegues el API Secret en esta página ni en el código.
+                  </p>
+                  <div className="flex flex-wrap gap-2 text-[11px] font-mono text-amber-200">
+                    <code className="rounded bg-black/50 px-2 py-1">CLOUDINARY_CLOUD_NAME</code>
+                    <code className="rounded bg-black/50 px-2 py-1">CLOUDINARY_API_KEY</code>
+                    <code className="rounded bg-black/50 px-2 py-1">CLOUDINARY_API_SECRET</code>
+                  </div>
+                  <p className="text-xs text-white/70 leading-relaxed">
+                    Los PDF y el CV siguen usando Vercel Blob. Si Blob ya llegó al límite, elimina allí archivos multimedia antiguos solo después de comprobar que los proyectos ya apuntan a sus nuevas URL de Cloudinary; deja intacto <code className="text-white/90">portfolio-data.json</code>.
                   </p>
                 </div>
 
@@ -2286,7 +2405,7 @@ export default function App() {
                         PASO 1 · Subida Directa
                       </span>
                       <p className="text-xs text-white/70 leading-relaxed">
-                        Al arrastrar o elegir fotos, vídeos o el CV en el admin, se envían automáticamente al endpoint <code className="text-white/90">/api/upload.ts</code> de Vercel Blob.
+                        Las fotos, videos y portadas se firman en <code className="text-white/90">/api/cloudinary-signature</code> y se suben directamente a Cloudinary. Los PDF y el CV van a Vercel Blob.
                       </p>
                     </div>
                     <div className="bg-black/50 border border-white/10 rounded-xl p-4">
@@ -2294,7 +2413,7 @@ export default function App() {
                         PASO 2 · CDN Permanente
                       </span>
                       <p className="text-xs text-white/70 leading-relaxed">
-                        Vercel guarda el archivo en su red CDN mundial y le asigna un enlace permanente de alta velocidad (<code className="text-white/90">blob.vercel-storage.com</code>).
+                        Cloudinary entrega URL públicas para las imágenes y videos; Blob conserva los documentos PDF.
                       </p>
                     </div>
                     <div className="bg-black/50 border border-white/10 rounded-xl p-4">
@@ -2315,7 +2434,7 @@ export default function App() {
                     <span>Cómo activar Vercel Blob en tu cuenta de Vercel (Solo 3 clics)</span>
                   </h4>
                   <p className="text-xs text-white/70 leading-relaxed">
-                    Todo el código del proyecto (frontend y endpoints serverless) ya está completamente programado y listo. Para que Vercel Blob empiece a recibir tus archivos, solo debes hacer esto en tu cuenta de Vercel:
+                    Para guardar el JSON del portafolio y los PDF, conecta un Blob Store a tu proyecto Vercel. Las fotos, videos y portadas se guardan en Cloudinary.
                   </p>
 
                   <div className="space-y-3">
@@ -2727,7 +2846,11 @@ export default function App() {
                   </p>
                 )}
                 {!isUploadingMedia && blobUploadNotice && (
-                  <p className="mt-2 text-[11px] text-white/70" aria-live="polite">
+                  <p
+                    className={`mt-2 text-[11px] ${blobUploadHasError ? 'text-red-300' : 'text-emerald-300'}`}
+                    role={blobUploadHasError ? 'alert' : 'status'}
+                    aria-live="polite"
+                  >
                     {blobUploadNotice}
                   </p>
                 )}
