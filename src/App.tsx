@@ -306,6 +306,7 @@ export default function App() {
     'idle' | 'checking' | 'connected' | 'not_connected' | 'syncing' | 'synced' | 'error'
   >('idle');
   const [blobSyncMessage, setBlobSyncMessage] = useState('');
+  const [projectSaveMessage, setProjectSaveMessage] = useState('');
   const [customBlobToken, setCustomBlobToken] = useState(() => {
     return localStorage.getItem('sr_vercel_blob_token') || '';
   });
@@ -331,7 +332,13 @@ export default function App() {
   }, [categories]);
 
   useEffect(() => {
-    localStorage.setItem('sr_projects', JSON.stringify(projects));
+    try {
+      localStorage.setItem('sr_projects', JSON.stringify(projects));
+    } catch {
+      setProjectSaveMessage(
+        'No se pudo guardar en este navegador. Libera espacio de almacenamiento e inténtalo de nuevo.'
+      );
+    }
   }, [projects]);
 
   useEffect(() => {
@@ -349,6 +356,10 @@ export default function App() {
         const res = await fetch('/api/projects');
         if (!res.ok) return;
         const json = await res.json();
+        if (json?.connected) {
+          setBlobSyncStatus('connected');
+        }
+
         if (json && json.data) {
           const {
             projects: cloudProjects,
@@ -373,7 +384,6 @@ export default function App() {
             setCvPdfUrl(cloudCv);
             localStorage.setItem('sr_cv_pdf_url', cloudCv);
           }
-          setBlobSyncStatus('connected');
         }
       } catch {
         // Modo local o primera ejecución
@@ -934,6 +944,9 @@ export default function App() {
     setFormCategory(project.category);
     setFormDescription(project.description);
     setFormMediaList(project.media);
+    // El detalle y el formulario usan la misma capa visual. Cerramos el
+    // detalle para que el formulario de edición siempre reciba los clics.
+    setActiveProject(null);
     setActiveModal('edit_project');
   };
 
@@ -992,8 +1005,29 @@ export default function App() {
       setProjects(updatedList);
     }
 
-    // Sincronización automática inmediata con Vercel Blob en la nube
-    syncPortfolioToVercelBlob(updatedList);
+    // El cambio ya queda guardado localmente mediante el efecto de projects.
+    // Solo sincronizamos automáticamente si sabemos que Blob está disponible;
+    // así una configuración pendiente de Vercel no convierte un guardado local
+    // correcto en un error para el usuario.
+    setProjectSaveMessage('Cambios guardados en este navegador.');
+    if (
+      customBlobToken ||
+      blobSyncStatus === 'connected' ||
+      blobSyncStatus === 'synced'
+    ) {
+      void syncPortfolioToVercelBlob(updatedList).then((synced) => {
+        setProjectSaveMessage(
+          synced
+            ? 'Cambios guardados y sincronizados en Vercel Blob.'
+            : 'Cambios guardados en este navegador; la sincronización en la nube no se completó.'
+        );
+      });
+    } else {
+      setBlobSyncStatus('not_connected');
+      setBlobSyncMessage(
+        'Cambios guardados localmente. Configura Vercel Blob para sincronizarlos en la nube.'
+      );
+    }
 
     setActiveModal('admin');
   };
@@ -1003,11 +1037,24 @@ export default function App() {
     if (confirm('¿Estás seguro de que deseas eliminar este proyecto?')) {
       const nextProjects = projects.filter((p) => p.id !== projectId);
       setProjects(nextProjects);
+      setProjectSaveMessage('Proyecto eliminado en este navegador.');
       if (activeProject?.id === projectId) {
         setActiveProject(null);
       }
-      // Sincronizar eliminación en la nube
-      syncPortfolioToVercelBlob(nextProjects);
+      // Sincronizar la eliminación solo si Blob ya está disponible.
+      if (
+        customBlobToken ||
+        blobSyncStatus === 'connected' ||
+        blobSyncStatus === 'synced'
+      ) {
+        void syncPortfolioToVercelBlob(nextProjects).then((synced) => {
+          setProjectSaveMessage(
+            synced
+              ? 'Proyecto eliminado y sincronizado en Vercel Blob.'
+              : 'Proyecto eliminado localmente; la sincronización en la nube no se completó.'
+          );
+        });
+      }
     }
   };
 
@@ -1468,6 +1515,15 @@ export default function App() {
                     Aquí puedes modificar títulos, fechas, categorías y archivos adjuntos (fotos, vídeos y PDFs), o eliminar proyectos existentes.
                   </p>
                 </div>
+
+                {projectSaveMessage && (
+                  <div
+                    role="status"
+                    className="rounded-lg border border-emerald-700/60 bg-emerald-950/50 px-3 py-2.5 text-xs text-emerald-200"
+                  >
+                    {projectSaveMessage}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 gap-3">
                   {projects.map((proj) => {
