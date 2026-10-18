@@ -1,3 +1,4 @@
+import { put } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 
 export const config = {
@@ -12,6 +13,47 @@ export default async function handler(request: Request): Promise<Response> {
     });
   }
 
+  const { searchParams } = new URL(request.url);
+  const filename = searchParams.get('filename');
+
+  // =========================================================================
+  // MÉTODO 1: SERVER UPLOAD DIRECTO (El método simple con ?filename=...)
+  // =========================================================================
+  // Recibe directamente el archivo en el body del request.
+  // Ideal para imágenes ligeras (< 4.5 MB debido al límite de funciones serverless de Vercel).
+  if (filename) {
+    try {
+      if (!request.body) {
+        return new Response(JSON.stringify({ error: 'No se envió cuerpo de archivo' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      const token = process.env.BLOB_READ_WRITE_TOKEN;
+      const cleanFileName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await put(cleanFileName, request.body, {
+        access: 'public',
+        token,
+      });
+
+      return new Response(JSON.stringify(blob), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (error) {
+      return new Response(
+        JSON.stringify({ error: (error as Error).message }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  // =========================================================================
+  // MÉTODO 2: CLIENT UPLOADS QUICKSTART (Para archivos > 4.5 MB: Vídeos, RAW, PDFs)
+  // =========================================================================
+  // La subida va directamente del navegador del usuario a Vercel Blob sin pasar
+  // por el límite de 4.5 MB de la función (permite hasta 500 MB).
   try {
     const body = (await request.json()) as HandleUploadBody;
 
@@ -19,7 +61,6 @@ export default async function handler(request: Request): Promise<Response> {
       body,
       request,
       onBeforeGenerateToken: async (pathname: string) => {
-        // Autorizar tipos de archivo permitidos para el portafolio de Samuel Restrepo
         return {
           allowedContentTypes: [
             'image/jpeg',
@@ -32,12 +73,11 @@ export default async function handler(request: Request): Promise<Response> {
             'video/quicktime',
             'application/pdf',
           ],
-          maximumSizeInBytes: 150 * 1024 * 1024, // 150 MB (soporta vídeos pesados, fotos RAW/4K y PDFs)
+          maximumSizeInBytes: 500 * 1024 * 1024, // 500 MB (soporta vídeos pesados)
         };
       },
       onUploadCompleted: async ({ blob }) => {
-        // Registro de subida completada en Vercel
-        console.log('Vercel Blob subido con éxito:', blob.url);
+        console.log('Blob subido con éxito a Vercel:', blob.url);
       },
     });
 

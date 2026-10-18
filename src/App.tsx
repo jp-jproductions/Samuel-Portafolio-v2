@@ -524,7 +524,8 @@ export default function App() {
     }
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
 
-    // 1. Intentar subida automática a Vercel Blob en la nube
+    // 1. Intentar subida automática a Vercel Blob
+    // Para archivos > 4.5 MB (vídeos, etc.) o subida rápida, usamos @vercel/blob/client (Client Uploads Quickstart)
     try {
       const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
       const blobResult = await upload(cleanFileName, file, {
@@ -544,8 +545,38 @@ export default function App() {
           isBlob: true,
         };
       }
-    } catch (blobErr) {
-      console.warn('Subida a Vercel Blob no completada (en entorno local o sin token configurado en Vercel):', blobErr);
+    } catch (clientUploadErr) {
+      // Método Server Upload directo (para archivos <= 4.5 MB como imágenes o avatares)
+      if (file.size <= 4.5 * 1024 * 1024) {
+        try {
+          const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+          const serverRes = await fetch(
+            `/api/upload?filename=${encodeURIComponent(cleanFileName)}`,
+            {
+              method: 'POST',
+              body: file,
+            }
+          );
+          if (serverRes.ok) {
+            const serverBlob = await serverRes.json();
+            if (serverBlob && serverBlob.url) {
+              return {
+                media: {
+                  id: Date.now().toString() + Math.random().toString().slice(2, 6),
+                  type,
+                  name: file.name,
+                  url: serverBlob.url,
+                  size: sizeInMb,
+                },
+                isBlob: true,
+              };
+            }
+          }
+        } catch (serverErr) {
+          console.warn('Server upload fallback failed:', serverErr);
+        }
+      }
+      console.warn('Subida a Vercel Blob no completada (en entorno local o sin token configurado en Vercel):', clientUploadErr);
     }
 
     // 2. Fallback de lectura local (previsualización si no hay conexión con Vercel)
