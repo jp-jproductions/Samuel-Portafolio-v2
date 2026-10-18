@@ -4,6 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { upload } from '@vercel/blob/client';
 
 const VIDEO_URL = '/background-video.mp4';
 const FALLBACK_VIDEO_URL =
@@ -508,10 +509,27 @@ export default function App() {
       customBlobToken || localStorage.getItem('sr_vercel_blob_token') || ''
     ).trim();
 
-    // La carga remota fue retirada. Este flujo ya no se expone en la interfaz;
-    // se conserva temporalmente solo como compatibilidad con sesiones abiertas.
     try {
-      throw new Error('La carga remota está desactivada');
+      const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await upload(`proyectos/${cleanFileName}`, file, {
+        access: 'public',
+        handleUploadUrl: '/api/upload',
+        multipart: file.size > 20 * 1024 * 1024,
+        headers: activeToken ? { 'x-blob-token': activeToken } : undefined,
+        onUploadProgress: ({ percentage }) => {
+          setUploadProgressText(`Subiendo ${file.name}: ${Math.round(percentage)}%`);
+        },
+      });
+      return {
+        media: {
+          id: Date.now().toString() + Math.random().toString().slice(2, 6),
+          type,
+          name: file.name,
+          url: blob.url,
+          size: sizeInMb,
+        },
+        isBlob: true,
+      };
     } catch (clientUploadErr) {
       // Método Server Upload directo (para archivos <= 4.5 MB como imágenes o avatares)
       if (file.size <= 4.5 * 1024 * 1024) {
