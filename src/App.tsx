@@ -290,7 +290,7 @@ export default function App() {
 
   // Admin tabs
   const [adminTab, setAdminTab] = useState<
-    'projects' | 'categories' | 'hero' | 'cv'
+    'projects' | 'categories' | 'hero' | 'cv' | 'blob'
   >('projects');
   const [copiedConfigNotice, setCopiedConfigNotice] = useState(false);
   const jsonImportInputRef = useRef<HTMLInputElement>(null);
@@ -363,8 +363,17 @@ export default function App() {
   const [remoteReady, setRemoteReady] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/projects', { cache: 'no-store' })
-      .then((res) => res.json())
+    const savedToken = localStorage.getItem('sr_vercel_blob_token')?.trim();
+    const headers: Record<string, string> = {};
+    if (savedToken) headers['x-blob-token'] = savedToken;
+
+    fetch('/api/projects', { cache: 'no-store', headers })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(`Error HTTP ${res.status} al cargar el portafolio`);
+        }
+        return res.json();
+      })
       .then((json) => {
         if (cancelled || !json?.data) return;
         const data = json.data;
@@ -682,6 +691,7 @@ export default function App() {
   const syncPortfolioToVercelBlob = async (customProjects?: Project[]) => {
     setBlobSyncStatus('syncing');
     setBlobSyncMessage('Enviando datos y sincronizando con Vercel Blob...');
+    setProjectSaveMessage('Cambios guardados localmente; sincronizando con Vercel Blob...');
     try {
       const activeToken = (
         customBlobToken || localStorage.getItem('sr_vercel_blob_token') || ''
@@ -723,6 +733,7 @@ export default function App() {
       setBlobSyncMessage(
         `🟢 ¡Portfolio sincronizado con éxito en Vercel Blob a las ${timeStr}! Los cambios ya están disponibles en la nube.`
       );
+      setProjectSaveMessage('Cambios guardados en este navegador y sincronizados con Vercel Blob.');
       setLastSyncedTime(timeStr);
       localStorage.setItem('sr_blob_last_synced', timeStr);
       if (json.url) {
@@ -732,6 +743,9 @@ export default function App() {
       return true;
     } catch (err: any) {
       setBlobSyncStatus('error');
+      setProjectSaveMessage(
+        `Cambios guardados solo en este navegador; no se pudieron sincronizar con Vercel Blob: ${err.message || 'error desconocido'}.`
+      );
       setBlobSyncMessage(
         `❌ Error al sincronizar: ${err.message || 'No se pudo guardar en Vercel Blob. Configura el token o actívalo en vercel.com.'}`
       );
@@ -756,7 +770,7 @@ export default function App() {
         headers['x-blob-token'] = activeToken;
       }
 
-      const res = await fetch('/api/projects', { headers });
+      const res = await fetch('/api/projects', { headers, cache: 'no-store' });
       const json = await res.json().catch(() => null);
 
       if (!res.ok || (json && json.error)) {
@@ -769,6 +783,28 @@ export default function App() {
       }
 
       if (json && json.connected) {
+        if (json.data) {
+          const data = json.data;
+          if (Array.isArray(data.projects)) {
+            setProjects(
+              data.projects.map((project: Project) => ({
+                ...project,
+                date: normalizeSemester(project.date),
+              }))
+            );
+          }
+          if (Array.isArray(data.categories) && data.categories.length) {
+            setCategories(data.categories);
+          }
+          if (data.heroTexts) {
+            const merged = { ...DEFAULT_HERO_TEXTS, ...data.heroTexts };
+            setHeroTexts(merged);
+            setEditHeroTexts(merged);
+          }
+          if (typeof data.cvPdfUrl === 'string' && data.cvPdfUrl) {
+            setCvPdfUrl(data.cvPdfUrl);
+          }
+        }
         setBlobSyncStatus('connected');
         setBlobSyncMessage(
           json.message ||
@@ -1497,6 +1533,20 @@ export default function App() {
             >
               CV de Samuel (PDF)
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAdminTab('blob');
+                if (blobSyncStatus === 'idle') checkVercelBlobStatus();
+              }}
+              className={`text-sm pb-2 border-b-2 font-medium transition-colors cursor-pointer ${
+                adminTab === 'blob'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-white/50 hover:text-white'
+              }`}
+            >
+              Guardado en la nube
+            </button>
           </div>
 
           {/* Admin Tab Content */}
@@ -1513,7 +1563,13 @@ export default function App() {
                 {projectSaveMessage && (
                   <div
                     role="status"
-                    className="rounded-lg border border-emerald-700/60 bg-emerald-950/50 px-3 py-2.5 text-xs text-emerald-200"
+                    className={`rounded-lg border px-3 py-2.5 text-xs ${
+                      blobSyncStatus === 'error'
+                        ? 'border-red-700/60 bg-red-950/50 text-red-200'
+                        : blobSyncStatus === 'syncing'
+                          ? 'border-amber-700/60 bg-amber-950/50 text-amber-200'
+                          : 'border-emerald-700/60 bg-emerald-950/50 text-emerald-200'
+                    }`}
                   >
                     {projectSaveMessage}
                   </div>
@@ -1889,7 +1945,7 @@ export default function App() {
             )}
 
             {/* TAB: VERCEL BLOB (ALMACENAMIENTO AUTOMÁTICO EN LA NUBE) */}
-            {false && (
+            {adminTab === 'blob' && (
               <div className="max-w-4xl space-y-6">
                 {/* Banner Principal: Cómo funciona Vercel Blob */}
                 <div className="bg-gradient-to-r from-neutral-900 via-neutral-900 to-black border border-white/20 rounded-2xl p-6 sm:p-7 shadow-2xl relative overflow-hidden">
