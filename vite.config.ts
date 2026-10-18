@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 
 function vercelApiDevPlugin(): Plugin {
   return {
@@ -68,7 +68,12 @@ function vercelApiDevPlugin(): Plugin {
   };
 }
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+  // Las funciones locales de /api usan process.env, no import.meta.env.
+  // Cargamos .env.local solo en el proceso de desarrollo para que el token
+  // permanezca del lado del servidor y nunca termine incluido en el cliente.
+  Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
+
   return {
     plugins: [react(), tailwindcss(), vercelApiDevPlugin()],
     resolve: {
