@@ -284,11 +284,6 @@ export default function App() {
   const [copiedConfigNotice, setCopiedConfigNotice] = useState(false);
   const jsonImportInputRef = useRef<HTMLInputElement>(null);
 
-  // Direct URL Input State for Project Media (carpetas /public o URLs de la nube)
-  const [showAddUrlInput, setShowAddUrlInput] = useState(false);
-  const [urlMediaName, setUrlMediaName] = useState('');
-  const [urlMediaUrl, setUrlMediaUrl] = useState('');
-  const [urlMediaType, setUrlMediaType] = useState<MediaType>('foto');
 
   // New / Edit Project Form State
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -818,30 +813,6 @@ export default function App() {
         setHeroTextSavedNotice(false);
       }, 3000);
     }
-  };
-
-  // Añadir un archivo estático ya ubicado dentro de /public.
-  const handleAddMediaByUrl = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!urlMediaUrl.trim()) return;
-    const typedPath = urlMediaUrl.trim().replace(/^public\/?/i, '');
-    const publicPath = typedPath.startsWith('/') ? typedPath : `/${typedPath}`;
-    const newMedia: ProjectMedia = {
-      id: Date.now().toString() + Math.random().toString().slice(2, 6),
-      type: urlMediaType,
-      name:
-        urlMediaName.trim() ||
-        (urlMediaType === 'foto'
-          ? 'Imagen.jpg'
-          : urlMediaType === 'video'
-            ? 'Video.mp4'
-            : 'Documento.pdf'),
-      url: publicPath,
-    };
-    setFormMediaList((prev) => [...prev, newMedia]);
-    setUrlMediaName('');
-    setUrlMediaUrl('');
-    setShowAddUrlInput(false);
   };
 
   const moveMedia = (fromIndex: number, direction: -1 | 1) => {
@@ -2376,90 +2347,46 @@ export default function App() {
                   </span>
                 </div>
 
-                <div className="rounded-xl border border-dashed border-white/25 bg-white/5 p-4 text-xs text-white/70">
-                  <p className="font-medium text-white">Archivos estáticos en <code>public/</code></p>
-                  <p className="mt-1 leading-relaxed">
-                    Crea una carpeta por proyecto, por ejemplo <code>public/proyecto-1/</code>,
-                    copia allí tus fotos y vídeos, y añade aquí su ruta web: <code>/proyecto-1/foto-01.jpg</code>.
-                  </p>
-                </div>
-
-                <div className="mt-3 flex justify-between items-center">
-                  <span className="text-[11px] text-white/50">
-                    Añade una ruta de archivo desde <code>/public</code>
+                <label
+                  htmlFor="project-media-upload"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    if (isUploadingMedia || !e.dataTransfer.files.length) return;
+                    const newFiles = await processFiles(e.dataTransfer.files);
+                    setFormMediaList((prev) => [...prev, ...newFiles]);
+                  }}
+                  className={`flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/25 bg-white/5 px-4 py-6 text-center transition-colors ${isUploadingMedia ? 'opacity-60 cursor-wait' : 'cursor-pointer hover:border-white/60 hover:bg-white/10'}`}
+                >
+                  <span className="text-sm font-medium text-white">
+                    {isUploadingMedia ? 'Subiendo archivos...' : 'Haz clic o arrastra tus archivos aquí'}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddUrlInput(!showAddUrlInput)}
-                    className="text-xs text-white/80 hover:text-white underline underline-offset-2 cursor-pointer"
-                  >
-                    {showAddUrlInput
-                      ? '✕ Ocultar enlace'
-                      : '+ Añadir archivo de /public'}
-                  </button>
-                </div>
+                  <span className="text-[11px] text-white/50">
+                    Fotos (JPG, PNG, WEBP, GIF), vídeos (MP4, MOV, WEBM) y PDF. Puedes seleccionar varios a la vez.
+                  </span>
+                  <input
+                    id="project-media-upload"
+                    type="file"
+                    multiple
+                    accept="image/*,video/*,application/pdf"
+                    disabled={isUploadingMedia}
+                    onChange={async (e) => {
+                      await handleMediaUpload(e);
+                      e.target.value = '';
+                    }}
+                    className="sr-only"
+                  />
+                </label>
 
-                {showAddUrlInput && (
-                  <div className="mt-2.5 p-3.5 bg-neutral-900 border border-white/15 rounded-xl space-y-2.5 animate-fade-in">
-                    <div className="flex gap-2">
-                      <div className="w-1/3">
-                        <label className="block text-[10px] text-white/60 uppercase font-mono mb-1">
-                          Tipo
-                        </label>
-                        <select
-                          value={urlMediaType}
-                          onChange={(e) =>
-                            setUrlMediaType(e.target.value as MediaType)
-                          }
-                          className="w-full bg-neutral-950 border border-white/20 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                        >
-                          <option value="foto">📷 Foto</option>
-                          <option value="video">🎬 Vídeo</option>
-                          <option value="pdf">📄 PDF</option>
-                        </select>
-                      </div>
-                      <div className="flex-1">
-                        <label className="block text-[10px] text-white/60 uppercase font-mono mb-1">
-                          Nombre visible (opcional)
-                        </label>
-                        <input
-                          type="text"
-                          value={urlMediaName}
-                          onChange={(e) => setUrlMediaName(e.target.value)}
-                          placeholder="Ej. Fotografia_01.jpg"
-                          className="w-full bg-white/5 border border-white/20 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-white"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-white/60 uppercase font-mono mb-1">
-                        Ruta dentro de /public *
-                      </label>
-                      <input
-                        type="text"
-                        value={urlMediaUrl}
-                        onChange={(e) => setUrlMediaUrl(e.target.value)}
-                        placeholder="Ej. /proyecto-1/foto-01.jpg"
-                        className="w-full bg-white/5 border border-white/20 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-white font-mono"
-                      />
-                    </div>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setShowAddUrlInput(false)}
-                        className="text-xs text-white/50 hover:text-white px-2.5 py-1 cursor-pointer"
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleAddMediaByUrl}
-                        className="bg-white text-black text-xs font-medium px-3.5 py-1 rounded-lg hover:bg-white/90 cursor-pointer"
-                      >
-                        Añadir archivo al proyecto
-                      </button>
-                    </div>
-                  </div>
+                {isUploadingMedia && (
+                  <p className="mt-2 text-[11px] font-mono text-white/60" aria-live="polite">
+                    {uploadProgressText}
+                  </p>
+                )}
+                {!isUploadingMedia && blobUploadNotice && (
+                  <p className="mt-2 text-[11px] text-white/70" aria-live="polite">
+                    {blobUploadNotice}
+                  </p>
                 )}
 
                 {/* Previsualización y gestión de archivos añadidos */}
