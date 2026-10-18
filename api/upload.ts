@@ -86,6 +86,7 @@ export default async function handler(request: Request): Promise<Response> {
             'application/pdf',
           ],
           maximumSizeInBytes: 500 * 1024 * 1024, // 500 MB (soporta vídeos pesados)
+          addRandomSuffix: true,
         };
       },
       onUploadCompleted: async ({ blob }) => {
