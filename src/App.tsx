@@ -2425,18 +2425,18 @@ export default function App() {
 
       {/* CREATE / EDIT PROJECT MODAL (Título, fecha, añadir fotos, vídeos o PDF) */}
       {(activeModal === 'new_project' || activeModal === 'edit_project') && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-          <div className="relative w-full max-w-2xl bg-neutral-950 border border-white/20 rounded-2xl p-6 sm:p-8 text-white shadow-2xl my-8">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-start sm:items-center justify-center p-2 sm:p-6 overflow-y-auto overscroll-contain">
+          <div className="relative flex max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-3rem)] w-full max-w-2xl flex-col overflow-hidden bg-neutral-950 border border-white/20 rounded-2xl p-4 sm:p-6 text-white shadow-2xl">
             <button
               type="button"
               onClick={() => setActiveModal('admin')}
-              className="absolute top-5 right-5 text-white/60 hover:text-white p-2 rounded-full cursor-pointer text-base"
+              className="absolute top-3 right-3 sm:top-4 sm:right-4 z-10 text-white/60 hover:text-white p-2 rounded-full cursor-pointer text-base bg-neutral-950"
               aria-label="Cerrar modal"
             >
               ✕
             </button>
 
-            <div className="mb-6">
+            <div className="mb-4 sm:mb-6 shrink-0 pr-10">
               <span className="text-xs font-mono text-white/50 uppercase tracking-wider">
                 Panel de Administrador
               </span>
@@ -2451,7 +2451,7 @@ export default function App() {
               </p>
             </div>
 
-            <form onSubmit={handleSaveProject} className="space-y-4">
+            <form onSubmit={handleSaveProject} className="min-h-0 flex-1 overflow-y-auto overscroll-contain space-y-4 pr-1">
               {/* Título & Fecha */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -2802,7 +2802,7 @@ export default function App() {
               </div>
 
               {/* Acciones */}
-              <div className="pt-3 flex justify-end gap-3 border-t border-white/10">
+              <div className="sticky bottom-0 pt-3 pb-1 flex justify-end gap-3 border-t border-white/10 bg-neutral-950">
                 <button
                   type="button"
                   onClick={() => setActiveModal('admin')}
