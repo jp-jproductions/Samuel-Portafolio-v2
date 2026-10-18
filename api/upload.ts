@@ -1,7 +1,7 @@
 import { put } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 
-export default async function handler(request: Request): Promise<Response> {
+async function handler(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -108,3 +108,5 @@ export default async function handler(request: Request): Promise<Response> {
     );
   }
 }
+
+export default { fetch: handler };

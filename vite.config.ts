@@ -30,7 +30,7 @@ function vercelApiDev(): Plugin {
           });
 
           const mod = await server.ssrLoadModule(file);
-          const response: Response = await mod.default(request);
+          const response: Response = await mod.default.fetch(request);
           res.statusCode = response.status;
           response.headers.forEach((value, key) => res.setHeader(key, value));
           res.end(Buffer.from(await response.arrayBuffer()));

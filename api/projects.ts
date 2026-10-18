@@ -10,7 +10,7 @@ function getErrorMessage(error: unknown): string {
   }
 }
 
-export default async function handler(request: Request): Promise<Response> {
+async function handler(request: Request): Promise<Response> {
   const rawToken =
     request.headers.get('x-blob-token') ||
     request.headers.get('Authorization')?.replace('Bearer ', '') ||
@@ -194,3 +194,5 @@ export default async function handler(request: Request): Promise<Response> {
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+export default { fetch: handler };
