@@ -11,16 +11,20 @@ export default async function handler(request: Request): Promise<Response> {
 
   const { searchParams } = new URL(request.url);
   const filename = searchParams.get('filename');
-  const token =
+  const rawToken =
     request.headers.get('x-blob-token') ||
     request.headers.get('Authorization')?.replace('Bearer ', '') ||
-    process.env.BLOB_READ_WRITE_TOKEN;
+    process.env.BLOB_READ_WRITE_TOKEN ||
+    '';
+
+  const token = rawToken
+    .replace(/^BLOB_READ_WRITE_TOKEN\s*=\s*/i, '')
+    .replace(/^['"]|['"]$/g, '')
+    .trim();
 
   // =========================================================================
   // MÉTODO 1: SERVER UPLOAD DIRECTO (El método simple con ?filename=...)
   // =========================================================================
-  // Recibe directamente el archivo en el body del request.
-  // Ideal para imágenes ligeras (< 4.5 MB debido al límite de funciones serverless de Vercel).
   if (filename) {
     try {
       if (!request.body) {
@@ -61,8 +65,6 @@ export default async function handler(request: Request): Promise<Response> {
   // =========================================================================
   // MÉTODO 2: CLIENT UPLOADS QUICKSTART (Para archivos > 4.5 MB: Vídeos, RAW, PDFs)
   // =========================================================================
-  // La subida va directamente del navegador del usuario a Vercel Blob sin pasar
-  // por el límite de 4.5 MB de la función (permite hasta 500 MB).
   try {
     const body = (await request.json()) as HandleUploadBody;
 

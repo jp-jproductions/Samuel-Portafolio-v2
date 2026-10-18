@@ -1,10 +1,31 @@
-import { put, head } from '@vercel/blob';
+import { list, put, head } from '@vercel/blob';
 
 export default async function handler(request: Request): Promise<Response> {
-  const token =
+  const rawToken =
     request.headers.get('x-blob-token') ||
     request.headers.get('Authorization')?.replace('Bearer ', '') ||
-    process.env.BLOB_READ_WRITE_TOKEN;
+    process.env.BLOB_READ_WRITE_TOKEN ||
+    '';
+
+  // Limpieza automática (por si el usuario copió con comillas, espacios o BLOB_READ_WRITE_TOKEN=)
+  const token = rawToken
+    .replace(/^BLOB_READ_WRITE_TOKEN\s*=\s*/i, '')
+    .replace(/^['"]|['"]$/g, '')
+    .trim();
+
+  // Si el usuario copió el Store ID en lugar del Token secreto
+  if (token && token.startsWith('store_')) {
+    return new Response(
+      JSON.stringify({
+        connected: false,
+        error: `Has ingresado el ID del almacén ("${token}"). Vercel Blob requiere el token secreto que empieza por "vercel_blob_rw_...". Lo encuentras en Vercel > tu Blob Store > pestaña Settings > Tokens.`,
+      }),
+      {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
 
   if (request.method === 'GET') {
     try {
@@ -22,27 +43,29 @@ export default async function handler(request: Request): Promise<Response> {
         );
       }
 
-      // Probar si el token es válido y buscar si ya existe portfolio-data.json
+      // 1. Probar validez del token en Vercel Blob mediante list({ limit: 1 })
+      try {
+        await list({ limit: 1, token });
+      } catch (listErr: any) {
+        return new Response(
+          JSON.stringify({
+            connected: false,
+            error: `Error de autenticación con Vercel Blob: ${listErr?.message || 'Token no válido'}. Asegúrate de copiar el token que empieza por "vercel_blob_rw_".`,
+          }),
+          {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // 2. Si el token es válido, verificar si ya existe portfolio-data.json
       let blobMeta = null;
       try {
         blobMeta = await head('portfolio-data.json', { token });
-      } catch (headErr: any) {
-        if (headErr?.name === 'BlobNotFoundError' || headErr?.message?.toLowerCase().includes('could not find')) {
-          // El token y el store son 100% válidos, pero el archivo aún no se ha subido
-          blobMeta = null;
-        } else {
-          // Token inválido, store inexistente, acceso denegado o error de autenticación
-          return new Response(
-            JSON.stringify({
-              connected: false,
-              error: `Error de autenticación con Vercel Blob: ${headErr?.message || 'Token o almacén no válido'}`,
-            }),
-            {
-              status: 401,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
+      } catch {
+        // Archivo no creado aún
+        blobMeta = null;
       }
 
       if (!blobMeta) {
@@ -51,7 +74,7 @@ export default async function handler(request: Request): Promise<Response> {
             connected: true,
             data: null,
             message:
-              'Conectado a Vercel Blob con éxito. Aún no se ha sincronizado el archivo portfolio-data.json.',
+              '🟢 ¡Conexión exitosa a tu Vercel Blob Store! Aún no has sincronizado portfolio-data.json. Haz clic en "Sincronizar proyectos ahora".',
           }),
           {
             status: 200,
@@ -69,7 +92,7 @@ export default async function handler(request: Request): Promise<Response> {
           connected: true,
           data,
           url: blobMeta.url,
-          message: 'Conectado a Vercel Blob. Datos sincronizados correctamente.',
+          message: '🟢 Conectado a Vercel Blob. Datos sincronizados correctamente.',
         }),
         {
           status: 200,

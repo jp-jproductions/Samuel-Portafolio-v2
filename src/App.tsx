@@ -312,7 +312,8 @@ export default function App() {
   const [blobTokenInput, setBlobTokenInput] = useState(() => {
     return localStorage.getItem('sr_vercel_blob_token') || '';
   });
-  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [showTokenInput, setShowTokenInput] = useState(true);
+  const [showTokenChars, setShowTokenChars] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState<string>(() => {
     return localStorage.getItem('sr_blob_last_synced') || '';
   });
@@ -777,12 +778,25 @@ export default function App() {
   // Guardar Token personalizado de Vercel Blob
   const handleSaveCustomToken = (tokenToSave?: string) => {
     const val = typeof tokenToSave === 'string' ? tokenToSave : blobTokenInput;
-    const trimmed = val.trim();
-    setCustomBlobToken(trimmed);
-    setBlobTokenInput(trimmed);
-    localStorage.setItem('sr_vercel_blob_token', trimmed);
-    if (trimmed) {
-      checkVercelBlobStatus(trimmed);
+    const clean = val
+      .replace(/^BLOB_READ_WRITE_TOKEN\s*=\s*/i, '')
+      .replace(/^['"]|['"]$/g, '')
+      .trim();
+
+    if (clean && clean.startsWith('store_')) {
+      setBlobSyncStatus('error');
+      setBlobSyncMessage(
+        `⚠️ Has ingresado el Store ID ("${clean}"). Vercel Blob requiere el token secreto que empieza por "vercel_blob_rw_...". Lo encuentras en Vercel > tu Blob Store > pestaña Settings > Tokens.`
+      );
+      setBlobTokenInput(clean);
+      return;
+    }
+
+    setCustomBlobToken(clean);
+    setBlobTokenInput(clean);
+    localStorage.setItem('sr_vercel_blob_token', clean);
+    if (clean) {
+      checkVercelBlobStatus(clean);
     } else {
       setBlobSyncStatus('not_connected');
       setBlobSyncMessage('Token eliminado. Se utilizará la variable de entorno de Vercel si existe.');
@@ -2002,12 +2016,22 @@ export default function App() {
 
                   {showTokenInput && (
                     <div className="p-4 bg-black/50 border border-white/10 rounded-xl space-y-3 animate-fade-in">
-                      <label className="block text-xs font-medium text-white/80">
-                        Pega tu BLOB_READ_WRITE_TOKEN de Vercel:
-                      </label>
+                      <div className="flex justify-between items-center">
+                        <label className="block text-xs font-medium text-white/90">
+                          Pega tu token secreto (<code className="text-emerald-400">vercel_blob_rw_...</code>):
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowTokenChars(!showTokenChars)}
+                          className="text-[11px] text-white/50 hover:text-white cursor-pointer"
+                        >
+                          {showTokenChars ? '🙈 Ocultar' : '👁️ Ver caracteres'}
+                        </button>
+                      </div>
+
                       <div className="flex flex-col sm:flex-row gap-2">
                         <input
-                          type="password"
+                          type={showTokenChars ? 'text' : 'password'}
                           value={blobTokenInput}
                           onChange={(e) => setBlobTokenInput(e.target.value)}
                           placeholder="vercel_blob_rw_..."
@@ -2016,7 +2040,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => handleSaveCustomToken()}
-                          className="bg-white text-black hover:bg-white/90 text-xs font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer shrink-0"
+                          className="bg-white text-black hover:bg-white/90 text-xs font-semibold px-4 py-2 rounded-lg transition-colors cursor-pointer shrink-0 shadow-sm"
                         >
                           Guardar y Comprobar
                         </button>
@@ -2030,9 +2054,24 @@ export default function App() {
                           </button>
                         )}
                       </div>
-                      <p className="text-[11px] text-white/50 leading-relaxed">
-                        🔒 Este token se almacena únicamente en tu navegador para permitirte sincronizar y subir archivos en vivo. Al desplegar en Vercel, la plataforma inyecta automáticamente este token sin que tengas que ingresarlo manualmente.
-                      </p>
+
+                      <div className="p-3 bg-white/5 border border-white/10 rounded-lg text-[11px] text-white/70 space-y-1.5">
+                        <p>
+                          💡 <strong>¿Dónde conseguirlo en Vercel?</strong>
+                        </p>
+                        <p className="leading-relaxed">
+                          1. En Vercel, entra a tu almacén Blob (<code className="text-white/90">store_5o1b0IlqxA778RJQ</code>).
+                          <br />
+                          2. Haz clic en la pestaña <strong>Settings</strong> ➔ menú lateral <strong>Tokens</strong>.
+                          <br />
+                          3. Si no hay ninguno, haz clic en <strong>Create Token</strong> (con permisos <em>Read and Write</em>).
+                          <br />
+                          4. Copia el token que empieza por <code className="text-emerald-400">vercel_blob_rw_...</code> y pégalo arriba.
+                        </p>
+                        <p className="text-amber-300/90 text-[10px] font-mono">
+                          ⚠️ Aviso: <code className="text-white">store_5o1b0IlqxA778RJQ</code> es el ID del almacén, no el token. Vercel Blob requiere el token secreto que inicia con <code className="text-emerald-300">vercel_blob_rw_</code>.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
