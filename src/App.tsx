@@ -30,10 +30,23 @@ export interface Project {
   id: string;
   title: string;
   date: string;
-  category: string;
+  category: string[];
   description: string;
   cover?: string;
   media: ProjectMedia[];
+}
+
+type ProjectWithLegacyCategory = Omit<Project, 'category'> & {
+  category?: string | string[];
+};
+
+function normalizeProjectCategories(project: ProjectWithLegacyCategory): Project {
+  const category = Array.isArray(project.category)
+    ? project.category
+    : project.category
+      ? [project.category]
+      : [];
+  return { ...project, category };
 }
 
 export const SEMESTER_OPTIONS = ['2025-1', '2025-2', '2026-1', '2026-2'] as const;
@@ -52,7 +65,7 @@ const INITIAL_PROJECTS: Project[] = [
     id: '1',
     title: 'A.R.I.A Visual Architecture',
     date: '2026-1 y 2026-2',
-    category: 'Diseño',
+    category: ['Diseño'],
     description:
       'Sistema de diseño sensorial interactivo y prototipado cinemático para interfaces de nueva generación.',
     media: [
@@ -81,7 +94,7 @@ const INITIAL_PROJECTS: Project[] = [
     id: '2',
     title: 'Luces de Asfalto - Serie 35mm',
     date: '2025-2 a 2026-1',
-    category: 'Fotografía',
+    category: ['Fotografía'],
     description:
       'Crónica fotográfica documental capturada en película de 35mm sobre la soledad y la vibración nocturna urbana.',
     media: [
@@ -109,7 +122,7 @@ const INITIAL_PROJECTS: Project[] = [
     id: '3',
     title: 'Cinetik Sculpture Reel',
     date: '2025-1',
-    category: '3D / Motion',
+    category: ['3D / Motion'],
     description:
       'Composiciones procedurales animadas y escultura virtual con iluminación dinámica y renderizado en tiempo real.',
     media: [
@@ -260,9 +273,9 @@ export default function App() {
     const saved = localStorage.getItem('sr_projects');
     if (saved) {
       try {
-        const parsed: Project[] = JSON.parse(saved);
+        const parsed: ProjectWithLegacyCategory[] = JSON.parse(saved);
         return parsed.map((p) => ({
-          ...p,
+          ...normalizeProjectCategories(p),
           date: normalizeSemester(p.date),
         }));
       } catch {
@@ -304,7 +317,9 @@ export default function App() {
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [formTitle, setFormTitle] = useState('');
   const [formDate, setFormDate] = useState<string>('2026-2');
-  const [formCategory, setFormCategory] = useState(categories[0] || 'Fotografía');
+  const [formCategories, setFormCategories] = useState<string[]>([
+    categories[0] || 'Fotografía',
+  ]);
   const [formDescription, setFormDescription] = useState('');
   const [formMediaList, setFormMediaList] = useState<ProjectMedia[]>([]);
   const [formCover, setFormCover] = useState('');
@@ -395,7 +410,10 @@ export default function App() {
         const data = json.data;
         if (Array.isArray(data.projects)) {
           setProjects(
-            data.projects.map((p: Project) => ({ ...p, date: normalizeSemester(p.date) }))
+            data.projects.map((p: ProjectWithLegacyCategory) => ({
+              ...normalizeProjectCategories(p),
+              date: normalizeSemester(p.date),
+            }))
           );
         }
         if (Array.isArray(data.categories) && data.categories.length) {
@@ -822,8 +840,8 @@ export default function App() {
           const data = json.data;
           if (Array.isArray(data.projects)) {
             setProjects(
-              data.projects.map((project: Project) => ({
-                ...project,
+              data.projects.map((project: ProjectWithLegacyCategory) => ({
+                ...normalizeProjectCategories(project),
                 date: normalizeSemester(project.date),
               }))
             );
@@ -905,7 +923,7 @@ export default function App() {
     if (!categories.includes(trimmed)) {
       const updated = [...categories, trimmed];
       setCategories(updated);
-      setFormCategory(trimmed);
+      setFormCategories((current) => [...current, trimmed]);
     }
     setNewCatInput('');
   };
@@ -917,12 +935,24 @@ export default function App() {
     }
     const updated = categories.filter((c) => c !== catToDelete);
     setCategories(updated);
+    const fallbackCategory = updated[0] || 'General';
+    const removeCategory = (project: Project): Project => {
+      const remaining = project.category.filter((category) => category !== catToDelete);
+      return {
+        ...project,
+        category: remaining.length ? remaining : [fallbackCategory],
+      };
+    };
+    setProjects((current) => current.map(removeCategory));
+    setActiveProject((current) => (current ? removeCategory(current) : null));
     if (selectedCategory === catToDelete) {
       setSelectedCategory('Todos');
     }
-    if (formCategory === catToDelete) {
-      setFormCategory(updated[0] || '');
-    }
+    setFormCategories((current) => {
+      if (!current.includes(catToDelete)) return current;
+      const remaining = current.filter((category) => category !== catToDelete);
+      return remaining.length ? remaining : [fallbackCategory];
+    });
   };
 
   // Hero Texts Handlers (Editable desde Admin)
@@ -986,8 +1016,11 @@ export default function App() {
       try {
         const imported = JSON.parse(event.target?.result as string);
         if (Array.isArray(imported)) {
-          setProjects(imported);
-          localStorage.setItem('sr_projects', JSON.stringify(imported));
+          const normalized = imported.map((project: ProjectWithLegacyCategory) =>
+            normalizeProjectCategories(project)
+          );
+          setProjects(normalized);
+          localStorage.setItem('sr_projects', JSON.stringify(normalized));
           alert('¡Proyectos importados con éxito!');
         }
       } catch {
@@ -1002,7 +1035,7 @@ export default function App() {
     setEditingProjectId(null);
     setFormTitle('');
     setFormDate('2026-2');
-    setFormCategory(categories[0] || 'Fotografía');
+    setFormCategories([categories[0] || 'Fotografía']);
     setFormDescription('');
     setFormMediaList([]);
     setFormCover('');
@@ -1015,7 +1048,7 @@ export default function App() {
     setEditingProjectId(project.id);
     setFormTitle(project.title);
     setFormDate(normalizeSemester(project.date));
-    setFormCategory(project.category);
+    setFormCategories(project.category);
     setFormDescription(project.description);
     setFormMediaList(project.media);
     setFormCover(project.cover || '');
@@ -1030,6 +1063,10 @@ export default function App() {
   const handleSaveProject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formTitle.trim()) return;
+    if (formCategories.length === 0) {
+      setProjectSaveMessage('Selecciona al menos una categoría para el proyecto.');
+      return;
+    }
 
     let updatedList: Project[] = [];
     if (editingProjectId) {
@@ -1040,7 +1077,7 @@ export default function App() {
               ...p,
               title: formTitle.trim(),
               date: formDate.trim() || p.date,
-              category: formCategory,
+              category: formCategories,
               description: formDescription.trim(),
               cover: formCover || undefined,
               media: formMediaList,
@@ -1053,7 +1090,7 @@ export default function App() {
           ...activeProject,
           title: formTitle.trim(),
           date: formDate,
-          category: formCategory,
+          category: formCategories,
           description: formDescription.trim(),
           cover: formCover || undefined,
           media: formMediaList,
@@ -1065,7 +1102,7 @@ export default function App() {
         id: Date.now().toString(),
         title: formTitle.trim(),
         date: formDate,
-        category: formCategory || categories[0] || 'General',
+        category: formCategories,
         description: formDescription.trim() || 'Proyecto creativo de Samuel Restrepo.',
         cover: formCover || undefined,
         media: formMediaList,
@@ -1124,7 +1161,7 @@ export default function App() {
   const filteredProjects =
     selectedCategory === 'Todos'
       ? projects
-      : projects.filter((p) => p.category === selectedCategory);
+    : projects.filter((p) => p.category.includes(selectedCategory));
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-black select-none font-sans text-white">
@@ -1626,10 +1663,15 @@ export default function App() {
                         className="bg-neutral-900/90 border border-white/10 rounded-xl p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:border-white/20 transition-colors"
                       >
                         <div className="space-y-1">
-                          <div className="flex items-center gap-2 text-xs font-mono">
-                            <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/80">
-                              {proj.category}
-                            </span>
+                          <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                            {proj.category.map((category) => (
+                              <span
+                                key={category}
+                                className="px-2 py-0.5 rounded-full bg-white/10 text-white/80"
+                              >
+                                {category}
+                              </span>
+                            ))}
                             <span className="text-white/40">{proj.date}</span>
                           </div>
                           <h3 className="text-lg font-medium text-white">{proj.title}</h3>
@@ -1708,7 +1750,7 @@ export default function App() {
                   </h3>
                   <div className="divide-y divide-white/10">
                     {categories.map((cat) => {
-                      const count = projects.filter((p) => p.category === cat).length;
+                      const count = projects.filter((p) => p.category.includes(cat)).length;
                       return (
                         <div
                           key={cat}
@@ -2509,19 +2551,35 @@ export default function App() {
               {/* Categoría */}
               <div>
                 <label className="block text-xs font-medium text-white/80 mb-1">
-                  Categoría
+                  Categorías
                 </label>
-                <select
-                  value={formCategory}
-                  onChange={(e) => setFormCategory(e.target.value)}
-                  className="w-full bg-neutral-900 border border-white/15 rounded-lg px-3.5 py-2 text-sm text-white focus:outline-none focus:border-white transition-colors"
-                >
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-lg border border-white/15 bg-neutral-900 p-3">
                   {categories.map((cat) => (
-                    <option key={cat} value={cat}>
+                    <label
+                      key={cat}
+                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-white/85 hover:bg-white/5 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={formCategories.includes(cat)}
+                        onChange={(e) =>
+                          setFormCategories((current) =>
+                            e.target.checked
+                              ? [...current, cat]
+                              : current.filter((category) => category !== cat)
+                          )
+                        }
+                        className="accent-white"
+                      />
                       {cat}
-                    </option>
+                    </label>
                   ))}
-                </select>
+                </div>
+                {formCategories.length === 0 && (
+                  <p className="mt-1 text-xs text-amber-300">
+                    Selecciona al menos una categoría.
+                  </p>
+                )}
               </div>
 
               {/* Descripción */}
@@ -2823,7 +2881,7 @@ export default function App() {
 
             {/* Dynamic Categories list */}
             {categories.map((cat) => {
-              const count = projects.filter((p) => p.category === cat).length;
+              const count = projects.filter((p) => p.category.includes(cat)).length;
               const isSelected = selectedCategory === cat;
               return (
                 <button
@@ -2900,9 +2958,16 @@ export default function App() {
                     <div className="p-4 flex flex-col justify-between flex-1">
                       <div>
                         <div className="flex justify-between items-baseline mb-1">
-                          <span className="text-[11px] font-mono text-white/50 tracking-wider uppercase">
-                            {project.category}
-                          </span>
+                          <div className="flex flex-wrap gap-x-2">
+                            {project.category.map((category) => (
+                              <span
+                                key={category}
+                                className="text-[11px] font-mono text-white/50 tracking-wider uppercase"
+                              >
+                                {category}
+                              </span>
+                            ))}
+                          </div>
                           <span className="text-[11px] font-mono text-white/60 bg-white/5 border border-white/10 px-2 py-0.5 rounded">
                             {project.date}
                           </span>
@@ -2943,10 +3008,15 @@ export default function App() {
             {/* Header */}
             <div className="px-6 py-4 border-b border-white/10 flex justify-between items-center shrink-0 bg-neutral-900/60">
               <div>
-                <div className="flex items-center gap-2 text-xs font-mono text-white/50 mb-1">
-                  <span className="uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-white/80">
-                    {activeProject.category}
-                  </span>
+                <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-white/50 mb-1">
+                  {activeProject.category.map((category) => (
+                    <span
+                      key={category}
+                      className="uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-white/80"
+                    >
+                      {category}
+                    </span>
+                  ))}
                   <span>·</span>
                   <span>Fecha: {activeProject.date}</span>
                 </div>
