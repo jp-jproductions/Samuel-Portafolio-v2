@@ -31,6 +31,7 @@ export interface Project {
   date: string;
   category: string;
   description: string;
+  cover?: string;
   media: ProjectMedia[];
 }
 
@@ -302,6 +303,9 @@ export default function App() {
   const [formCategory, setFormCategory] = useState(categories[0] || 'Fotografía');
   const [formDescription, setFormDescription] = useState('');
   const [formMediaList, setFormMediaList] = useState<ProjectMedia[]>([]);
+  const [formCover, setFormCover] = useState('');
+  const [isUploadingCover, setIsUploadingCover] = useState(false);
+  const [coverError, setCoverError] = useState('');
 
   // Estados heredados para compatibilidad con sesiones previas. Los medios se
   // gestionan exclusivamente mediante rutas de /public.
@@ -930,6 +934,8 @@ export default function App() {
     setFormCategory(categories[0] || 'Fotografía');
     setFormDescription('');
     setFormMediaList([]);
+    setFormCover('');
+    setCoverError('');
     setActiveModal('new_project');
   };
 
@@ -941,6 +947,8 @@ export default function App() {
     setFormCategory(project.category);
     setFormDescription(project.description);
     setFormMediaList(project.media);
+    setFormCover(project.cover || '');
+    setCoverError('');
     // El detalle y el formulario usan la misma capa visual. Cerramos el
     // detalle para que el formulario de edición siempre reciba los clics.
     setActiveProject(null);
@@ -963,6 +971,7 @@ export default function App() {
               date: formDate.trim() || p.date,
               category: formCategory,
               description: formDescription.trim(),
+              cover: formCover || undefined,
               media: formMediaList,
             }
           : p
@@ -975,6 +984,7 @@ export default function App() {
           date: formDate,
           category: formCategory,
           description: formDescription.trim(),
+          cover: formCover || undefined,
           media: formMediaList,
         });
       }
@@ -986,17 +996,8 @@ export default function App() {
         date: formDate,
         category: formCategory || categories[0] || 'General',
         description: formDescription.trim() || 'Proyecto creativo de Samuel Restrepo.',
-        media:
-          formMediaList.length > 0
-            ? formMediaList
-            : [
-                {
-                  id: Date.now().toString(),
-                  type: 'foto',
-                  name: 'Portada.jpg',
-                  url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
-                },
-              ],
+        cover: formCover || undefined,
+        media: formMediaList,
       };
       updatedList = [newProj, ...projects];
       setProjects(updatedList);
@@ -1026,6 +1027,25 @@ export default function App() {
     if (e.target.files && e.target.files.length > 0) {
       const newFiles = await processFiles(e.target.files);
       setFormMediaList((prev) => [...prev, ...newFiles]);
+    }
+  };
+
+  const handleCoverUpload = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setCoverError('La portada debe ser una imagen (JPG, PNG, WEBP o GIF).');
+      return;
+    }
+    setCoverError('');
+    setIsUploadingCover(true);
+    try {
+      const { media } = await uploadSingleFile(file);
+      setFormCover(media.url);
+    } catch (err) {
+      console.error('Error subiendo portada:', err);
+      setCoverError('No se pudo subir la portada. Inténtalo de nuevo.');
+    } finally {
+      setIsUploadingCover(false);
     }
   };
 
@@ -2423,6 +2443,89 @@ export default function App() {
                 />
               </div>
 
+              {/* Portada (solo visible en la galería "Ver proyectos") */}
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label htmlFor="project-cover-upload" className="block text-xs font-medium text-white/80">
+                    Portada del proyecto
+                  </label>
+                  <span className="text-[11px] text-white/50">
+                    Solo se muestra en la galería de proyectos
+                  </span>
+                </div>
+
+                <div className="flex gap-3 items-stretch">
+                  <label
+                    htmlFor="project-cover-upload"
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (isUploadingCover) return;
+                      handleCoverUpload(e.dataTransfer.files[0]);
+                    }}
+                    className={`relative w-40 shrink-0 aspect-[4/3] rounded-xl overflow-hidden border border-dashed border-white/25 bg-white/5 flex items-center justify-center text-center transition-colors ${isUploadingCover ? 'opacity-60 cursor-wait' : 'cursor-pointer hover:border-white/60 hover:bg-white/10'}`}
+                  >
+                    {formCover ? (
+                      <img
+                        src={formCover}
+                        alt="Portada del proyecto"
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="px-3 text-[11px] text-white/60">
+                        {isUploadingCover ? 'Subiendo...' : 'Haz clic o arrastra una imagen'}
+                      </span>
+                    )}
+                    {formCover && isUploadingCover && (
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/60 text-[11px] text-white">
+                        Subiendo...
+                      </span>
+                    )}
+                    <input
+                      id="project-cover-upload"
+                      type="file"
+                      accept="image/*"
+                      disabled={isUploadingCover}
+                      onChange={async (e) => {
+                        await handleCoverUpload(e.target.files?.[0]);
+                        e.target.value = '';
+                      }}
+                      className="sr-only"
+                    />
+                  </label>
+
+                  <div className="flex flex-col justify-between gap-2 text-[11px] text-white/60">
+                    <p className="leading-relaxed">
+                      Recomendado: imagen horizontal 4:3. Si no subes portada, se usará la primera foto del proyecto.
+                    </p>
+                    {formCover && (
+                      <div className="flex gap-3">
+                        <label
+                          htmlFor="project-cover-upload"
+                          className="text-white/80 hover:text-white underline underline-offset-2 cursor-pointer"
+                        >
+                          Cambiar
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setFormCover('')}
+                          disabled={isUploadingCover}
+                          className="text-red-400 hover:text-red-300 cursor-pointer disabled:opacity-40"
+                        >
+                          Quitar portada
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {coverError && (
+                  <p className="mt-2 text-[11px] text-red-400" role="alert">
+                    {coverError}
+                  </p>
+                )}
+              </div>
+
               {/* Adjuntos: Fotos, Vídeos o PDFs */}
               <div>
                 <div className="flex justify-between items-center mb-1.5">
@@ -2658,8 +2761,8 @@ export default function App() {
                   (m) => m.type === 'pdf'
                 ).length;
 
-                // Cover image: first photo or thumbnail
                 const coverPhoto =
+                  project.cover ||
                   project.media.find((m) => m.type === 'foto')?.url ||
                   'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80';
 
