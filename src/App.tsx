@@ -4,7 +4,6 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { upload } from '@vercel/blob/client';
 
 const VIDEO_URL = '/background-video.mp4';
 const FALLBACK_VIDEO_URL =
@@ -277,9 +276,9 @@ export default function App() {
     'all' | 'foto' | 'video' | 'pdf'
   >('all');
 
-  // Admin Tab: 'projects', 'categories', 'hero', 'cv', or 'vercel'
+  // Admin tabs
   const [adminTab, setAdminTab] = useState<
-    'projects' | 'categories' | 'hero' | 'cv' | 'vercel'
+    'projects' | 'categories' | 'hero' | 'cv'
   >('projects');
   const [copiedConfigNotice, setCopiedConfigNotice] = useState(false);
   const jsonImportInputRef = useRef<HTMLInputElement>(null);
@@ -298,7 +297,8 @@ export default function App() {
   const [formDescription, setFormDescription] = useState('');
   const [formMediaList, setFormMediaList] = useState<ProjectMedia[]>([]);
 
-  // Vercel Blob Cloud Storage States (Subida y Sincronización Automática)
+  // Estados heredados para compatibilidad con sesiones previas. Los medios se
+  // gestionan exclusivamente mediante rutas de /public.
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState('');
   const [blobUploadNotice, setBlobUploadNotice] = useState('');
@@ -348,50 +348,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('sr_hero_texts', JSON.stringify(heroTexts));
   }, [heroTexts]);
-
-  // Carga inicial automática desde Vercel Blob (si está desplegado en Vercel)
-  useEffect(() => {
-    const fetchBlobPortfolio = async () => {
-      try {
-        const res = await fetch('/api/projects');
-        if (!res.ok) return;
-        const json = await res.json();
-        if (json?.connected) {
-          setBlobSyncStatus('connected');
-        }
-
-        if (json && json.data) {
-          const {
-            projects: cloudProjects,
-            categories: cloudCats,
-            heroTexts: cloudHero,
-            cvPdfUrl: cloudCv,
-          } = json.data;
-
-          if (Array.isArray(cloudProjects) && cloudProjects.length > 0) {
-            setProjects(cloudProjects);
-            localStorage.setItem('sr_projects', JSON.stringify(cloudProjects));
-          }
-          if (Array.isArray(cloudCats) && cloudCats.length > 0) {
-            setCategories(cloudCats);
-            localStorage.setItem('sr_categories', JSON.stringify(cloudCats));
-          }
-          if (cloudHero) {
-            setHeroTexts(cloudHero);
-            localStorage.setItem('sr_hero_texts', JSON.stringify(cloudHero));
-          }
-          if (cloudCv) {
-            setCvPdfUrl(cloudCv);
-            localStorage.setItem('sr_cv_pdf_url', cloudCv);
-          }
-        }
-      } catch {
-        // Modo local o primera ejecución
-      }
-    };
-
-    fetchBlobPortfolio();
-  }, []);
 
   // Typewriter bound to editable hero text
   const { displayed, done: typewriterDone } = useTypewriter(
@@ -552,28 +508,10 @@ export default function App() {
       customBlobToken || localStorage.getItem('sr_vercel_blob_token') || ''
     ).trim();
 
-    // 1. Intentar subida automática a Vercel Blob
-    // Para archivos > 4.5 MB (vídeos, etc.) o subida rápida, usamos @vercel/blob/client (Client Uploads Quickstart)
+    // La carga remota fue retirada. Este flujo ya no se expone en la interfaz;
+    // se conserva temporalmente solo como compatibilidad con sesiones abiertas.
     try {
-      const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const blobResult = await upload(cleanFileName, file, {
-        access: 'public',
-        handleUploadUrl: '/api/upload',
-        headers: activeToken ? { 'x-blob-token': activeToken } : undefined,
-      });
-
-      if (blobResult && blobResult.url) {
-        return {
-          media: {
-            id: Date.now().toString() + Math.random().toString().slice(2, 6),
-            type,
-            name: file.name,
-            url: blobResult.url,
-            size: sizeInMb,
-          },
-          isBlob: true,
-        };
-      }
+      throw new Error('La carga remota está desactivada');
     } catch (clientUploadErr) {
       // Método Server Upload directo (para archivos <= 4.5 MB como imágenes o avatares)
       if (file.size <= 4.5 * 1024 * 1024) {
@@ -864,10 +802,12 @@ export default function App() {
     }
   };
 
-  // Add media directly via public path or cloud URL
+  // Añadir un archivo estático ya ubicado dentro de /public.
   const handleAddMediaByUrl = (e: React.FormEvent) => {
     e.preventDefault();
     if (!urlMediaUrl.trim()) return;
+    const typedPath = urlMediaUrl.trim().replace(/^public\/?/i, '');
+    const publicPath = typedPath.startsWith('/') ? typedPath : `/${typedPath}`;
     const newMedia: ProjectMedia = {
       id: Date.now().toString() + Math.random().toString().slice(2, 6),
       type: urlMediaType,
@@ -878,12 +818,22 @@ export default function App() {
           : urlMediaType === 'video'
             ? 'Video.mp4'
             : 'Documento.pdf'),
-      url: urlMediaUrl.trim(),
+      url: publicPath,
     };
     setFormMediaList((prev) => [...prev, newMedia]);
     setUrlMediaName('');
     setUrlMediaUrl('');
     setShowAddUrlInput(false);
+  };
+
+  const moveMedia = (fromIndex: number, direction: -1 | 1) => {
+    const toIndex = fromIndex + direction;
+    if (toIndex < 0 || toIndex >= formMediaList.length) return;
+    setFormMediaList((current) => {
+      const next = [...current];
+      [next[fromIndex], next[toIndex]] = [next[toIndex], next[fromIndex]];
+      return next;
+    });
   };
 
   // Export & Vercel Handlers
@@ -1005,29 +955,9 @@ export default function App() {
       setProjects(updatedList);
     }
 
-    // El cambio ya queda guardado localmente mediante el efecto de projects.
-    // Solo sincronizamos automáticamente si sabemos que Blob está disponible;
-    // así una configuración pendiente de Vercel no convierte un guardado local
-    // correcto en un error para el usuario.
+    // Los metadatos se guardan en el navegador. Los archivos viven en /public
+    // y se publican junto al sitio al desplegarlo.
     setProjectSaveMessage('Cambios guardados en este navegador.');
-    if (
-      customBlobToken ||
-      blobSyncStatus === 'connected' ||
-      blobSyncStatus === 'synced'
-    ) {
-      void syncPortfolioToVercelBlob(updatedList).then((synced) => {
-        setProjectSaveMessage(
-          synced
-            ? 'Cambios guardados y sincronizados en Vercel Blob.'
-            : 'Cambios guardados en este navegador; la sincronización en la nube no se completó.'
-        );
-      });
-    } else {
-      setBlobSyncStatus('not_connected');
-      setBlobSyncMessage(
-        'Cambios guardados localmente. Configura Vercel Blob para sincronizarlos en la nube.'
-      );
-    }
 
     setActiveModal('admin');
   };
@@ -1040,20 +970,6 @@ export default function App() {
       setProjectSaveMessage('Proyecto eliminado en este navegador.');
       if (activeProject?.id === projectId) {
         setActiveProject(null);
-      }
-      // Sincronizar la eliminación solo si Blob ya está disponible.
-      if (
-        customBlobToken ||
-        blobSyncStatus === 'connected' ||
-        blobSyncStatus === 'synced'
-      ) {
-        void syncPortfolioToVercelBlob(nextProjects).then((synced) => {
-          setProjectSaveMessage(
-            synced
-              ? 'Proyecto eliminado y sincronizado en Vercel Blob.'
-              : 'Proyecto eliminado localmente; la sincronización en la nube no se completó.'
-          );
-        });
       }
     }
   };
@@ -1485,24 +1401,6 @@ export default function App() {
             >
               CV de Samuel (PDF)
             </button>
-            <button
-              type="button"
-              onClick={() => setAdminTab('vercel')}
-              className={`text-sm pb-2 border-b-2 font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-                adminTab === 'vercel'
-                  ? 'border-white text-white font-semibold'
-                  : 'border-transparent text-white/50 hover:text-white'
-              }`}
-            >
-              <span>☁️</span>
-              <span>Vercel Blob (Nube Automática)</span>
-              {blobSyncStatus === 'connected' && (
-                <span
-                  className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"
-                  title="Conectado a Vercel Blob"
-                />
-              )}
-            </button>
           </div>
 
           {/* Admin Tab Content */}
@@ -1797,10 +1695,21 @@ export default function App() {
                       <div className="flex flex-wrap gap-2 shrink-0">
                         <button
                           type="button"
-                          onClick={() => cvFileInputRef.current?.click()}
+                          onClick={() => {
+                            const path = window.prompt(
+                              'Escribe la ruta del PDF dentro de public/',
+                              cvPdfUrl
+                            );
+                            if (path?.trim()) {
+                              const cleanPath = path.trim().replace(/^public\/?/i, '');
+                              setCvPdfUrl(
+                                cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`
+                              );
+                            }
+                          }}
                           className="bg-white text-black text-xs font-medium px-4 py-2 rounded-lg hover:bg-white/90 transition-colors cursor-pointer"
                         >
-                          Cargar archivo PDF
+                          Elegir ruta de PDF
                         </button>
                         <button
                           type="button"
@@ -1884,7 +1793,7 @@ export default function App() {
             )}
 
             {/* TAB: VERCEL BLOB (ALMACENAMIENTO AUTOMÁTICO EN LA NUBE) */}
-            {adminTab === 'vercel' && (
+            {false && (
               <div className="max-w-4xl space-y-6">
                 {/* Banner Principal: Cómo funciona Vercel Blob */}
                 <div className="bg-gradient-to-r from-neutral-900 via-neutral-900 to-black border border-white/20 rounded-2xl p-6 sm:p-7 shadow-2xl relative overflow-hidden">
@@ -2449,56 +2358,17 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Indicador de Subida Automática a Vercel Blob */}
-                {isUploadingMedia && (
-                  <div className="mb-3 p-3 bg-neutral-900 border border-white/20 rounded-xl flex items-center gap-3 text-xs text-white animate-pulse">
-                    <span className="text-xl">☁️</span>
-                    <div className="flex-1">
-                      <p className="font-medium text-white flex items-center gap-2">
-                        <span>Almacenando automáticamente en Vercel Blob...</span>
-                        <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                      </p>
-                      <p className="text-[11px] text-white/60 font-mono mt-0.5">{uploadProgressText}</p>
-                    </div>
-                  </div>
-                )}
-
-                {blobUploadNotice && (
-                  <div className="mb-3 p-3 bg-emerald-950/50 border border-emerald-700/60 rounded-xl text-xs text-emerald-200 flex items-center gap-2.5 shadow-sm">
-                    <span className="text-base">✓</span>
-                    <span className="leading-snug">{blobUploadNotice}</span>
-                  </div>
-                )}
-
-                <div
-                  onClick={() => adminFileInputRef.current?.click()}
-                  className="border-2 border-dashed border-white/20 hover:border-white/50 rounded-xl p-5 text-center cursor-pointer transition-colors bg-white/5 flex flex-col items-center justify-center group"
-                >
-                  <div className="flex items-center gap-3 text-white/50 group-hover:text-white/80 transition-colors mb-2">
-                    <span className="text-xl" title="Fotografía">📷</span>
-                    <span className="text-xl" title="Vídeo">🎬</span>
-                    <span className="text-xl" title="Documento PDF">📄</span>
-                  </div>
-                  <p className="text-xs sm:text-sm text-white/90 font-medium">
-                    Haz clic para seleccionar fotos, vídeos o PDFs
-                  </p>
-                  <p className="text-[11px] text-emerald-400/90 font-mono mt-1">
-                    ☁️ Se almacenan automáticamente en la nube (Vercel Blob)
+                <div className="rounded-xl border border-dashed border-white/25 bg-white/5 p-4 text-xs text-white/70">
+                  <p className="font-medium text-white">Archivos estáticos en <code>public/</code></p>
+                  <p className="mt-1 leading-relaxed">
+                    Crea una carpeta por proyecto, por ejemplo <code>public/proyecto-1/</code>,
+                    copia allí tus fotos y vídeos, y añade aquí su ruta web: <code>/proyecto-1/foto-01.jpg</code>.
                   </p>
                 </div>
 
-                <input
-                  ref={adminFileInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*,video/*,application/pdf"
-                  onChange={handleMediaUpload}
-                  className="hidden"
-                />
-
-                <div className="mt-2 flex justify-between items-center">
+                <div className="mt-3 flex justify-between items-center">
                   <span className="text-[11px] text-white/50">
-                    ¿Prefieres rutas locales o enlaces cloud?
+                    Añade una ruta de archivo desde <code>/public</code>
                   </span>
                   <button
                     type="button"
@@ -2507,7 +2377,7 @@ export default function App() {
                   >
                     {showAddUrlInput
                       ? '✕ Ocultar enlace'
-                      : '+ Añadir por ruta (/public/...) o enlace Cloud'}
+                      : '+ Añadir archivo de /public'}
                   </button>
                 </div>
 
@@ -2545,13 +2415,13 @@ export default function App() {
                     </div>
                     <div>
                       <label className="block text-[10px] text-white/60 uppercase font-mono mb-1">
-                        Ruta local o URL en la nube *
+                        Ruta dentro de /public *
                       </label>
                       <input
                         type="text"
                         value={urlMediaUrl}
                         onChange={(e) => setUrlMediaUrl(e.target.value)}
-                        placeholder="Ej. /proyectos/foto1.jpg o https://res.cloudinary.com/..."
+                        placeholder="Ej. /proyecto-1/foto-01.jpg"
                         className="w-full bg-white/5 border border-white/20 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-white font-mono"
                       />
                     </div>
@@ -2578,9 +2448,6 @@ export default function App() {
                 {formMediaList.length > 0 && (
                   <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto p-1">
                     {formMediaList.map((m, idx) => {
-                      const isCloud =
-                        m.url.includes('blob.vercel-storage') ||
-                        m.url.startsWith('http');
                       return (
                         <div
                           key={m.id}
@@ -2599,23 +2466,34 @@ export default function App() {
                                 {m.type}
                               </span>
                             </div>
-                            {isCloud ? (
-                              <span className="text-[9px] font-mono text-emerald-400 bg-emerald-950/70 border border-emerald-800/50 px-1.5 py-0.2 rounded shrink-0">
-                                ☁️ Blob
-                              </span>
-                            ) : (
-                              <span className="text-[9px] font-mono text-white/50 bg-white/5 border border-white/10 px-1.5 py-0.2 rounded shrink-0">
-                                📁 Local
-                              </span>
-                            )}
+                            <span className="text-[9px] font-mono text-white/50 bg-white/5 border border-white/10 px-1.5 py-0.2 rounded shrink-0">
+                              #{idx + 1}
+                            </span>
                           </div>
                           <p className="text-xs text-white truncate font-medium">
                             {m.name}
                           </p>
                           <div className="flex justify-between items-center pt-1 border-t border-white/5 text-[10px]">
-                            <span className="text-white/40 font-mono">
-                              {m.size || 'Archivo'}
-                            </span>
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => moveMedia(idx, -1)}
+                                disabled={idx === 0}
+                                className="text-white/60 hover:text-white disabled:opacity-25 cursor-pointer"
+                                aria-label="Mover archivo arriba"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveMedia(idx, 1)}
+                                disabled={idx === formMediaList.length - 1}
+                                className="text-white/60 hover:text-white disabled:opacity-25 cursor-pointer"
+                                aria-label="Mover archivo abajo"
+                              >
+                                ↓
+                              </button>
+                            </div>
                             <button
                               type="button"
                               onClick={() =>
@@ -2860,26 +2738,6 @@ export default function App() {
                     >
                       Modificar proyecto
                     </button>
-                    <input
-                      ref={projectDetailFileInputRef}
-                      type="file"
-                      multiple
-                      accept="image/*,video/*,application/pdf"
-                      onChange={async (e) => {
-                        if (e.target.files && e.target.files.length > 0) {
-                          const newM = await processFiles(e.target.files);
-                          const updated = {
-                            ...activeProject,
-                            media: [...activeProject.media, ...newM],
-                          };
-                          setActiveProject(updated);
-                          setProjects((prev) =>
-                            prev.map((p) => (p.id === updated.id ? updated : p))
-                          );
-                        }
-                      }}
-                      className="hidden"
-                    />
                   </>
                 )}
                 <button
