@@ -306,6 +306,19 @@ export default function App() {
     'idle' | 'checking' | 'connected' | 'not_connected' | 'syncing' | 'synced' | 'error'
   >('idle');
   const [blobSyncMessage, setBlobSyncMessage] = useState('');
+  const [customBlobToken, setCustomBlobToken] = useState(() => {
+    return localStorage.getItem('sr_vercel_blob_token') || '';
+  });
+  const [blobTokenInput, setBlobTokenInput] = useState(() => {
+    return localStorage.getItem('sr_vercel_blob_token') || '';
+  });
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState<string>(() => {
+    return localStorage.getItem('sr_blob_last_synced') || '';
+  });
+  const [lastSyncedUrl, setLastSyncedUrl] = useState<string>(() => {
+    return localStorage.getItem('sr_blob_last_url') || '';
+  });
 
   // File Inputs
   const adminFileInputRef = useRef<HTMLInputElement>(null);
@@ -524,6 +537,10 @@ export default function App() {
     }
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
 
+    const activeToken = (
+      customBlobToken || localStorage.getItem('sr_vercel_blob_token') || ''
+    ).trim();
+
     // 1. Intentar subida automática a Vercel Blob
     // Para archivos > 4.5 MB (vídeos, etc.) o subida rápida, usamos @vercel/blob/client (Client Uploads Quickstart)
     try {
@@ -531,6 +548,7 @@ export default function App() {
       const blobResult = await upload(cleanFileName, file, {
         access: 'public',
         handleUploadUrl: '/api/upload',
+        headers: activeToken ? { 'x-blob-token': activeToken } : undefined,
       });
 
       if (blobResult && blobResult.url) {
@@ -554,6 +572,7 @@ export default function App() {
             `/api/upload?filename=${encodeURIComponent(cleanFileName)}`,
             {
               method: 'POST',
+              headers: activeToken ? { 'x-blob-token': activeToken } : undefined,
               body: file,
             }
           );
@@ -576,7 +595,7 @@ export default function App() {
           console.warn('Server upload fallback failed:', serverErr);
         }
       }
-      console.warn('Subida a Vercel Blob no completada (en entorno local o sin token configurado en Vercel):', clientUploadErr);
+      console.warn('Subida a Vercel Blob no completada:', clientUploadErr);
     }
 
     // 2. Fallback de lectura local (previsualización si no hay conexión con Vercel)
@@ -629,7 +648,7 @@ export default function App() {
       setTimeout(() => setBlobUploadNotice(''), 5000);
     } else {
       setBlobUploadNotice(
-        `📁 Archivos cargados. Al desplegar en Vercel con Blob activado, se almacenarán en la nube automáticamente.`
+        `📁 Archivos cargados. Al desplegar en Vercel con Blob activado o con token, se almacenarán en la nube automáticamente.`
       );
       setTimeout(() => setBlobUploadNotice(''), 6000);
     }
@@ -640,8 +659,18 @@ export default function App() {
   // Sincronización automática de proyectos en la nube de Vercel Blob
   const syncPortfolioToVercelBlob = async (customProjects?: Project[]) => {
     setBlobSyncStatus('syncing');
-    setBlobSyncMessage('Sincronizando portfolio en Vercel Blob...');
+    setBlobSyncMessage('Enviando datos y sincronizando con Vercel Blob...');
     try {
+      const activeToken = (
+        customBlobToken || localStorage.getItem('sr_vercel_blob_token') || ''
+      ).trim();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (activeToken) {
+        headers['x-blob-token'] = activeToken;
+      }
+
       const payload = {
         projects: customProjects || projects,
         categories,
@@ -651,50 +680,113 @@ export default function App() {
       };
       const res = await fetch('/api/projects', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || 'Vercel Blob no vinculado');
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || !json.success) {
+        throw new Error(
+          json.error || `Error HTTP ${res.status} al sincronizar con Vercel Blob`
+        );
       }
 
+      const timeStr = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
       setBlobSyncStatus('synced');
-      setBlobSyncMessage('¡Portfolio sincronizado automáticamente en la nube de Vercel!');
-      setTimeout(() => {
-        setBlobSyncStatus('connected');
-        setBlobSyncMessage('');
-      }, 4000);
-      return true;
-    } catch {
-      setBlobSyncStatus('not_connected');
       setBlobSyncMessage(
-        'Guardado localmente. Recuerda activar Blob en vercel.com para sincronización mundial automática.'
+        `🟢 ¡Portfolio sincronizado con éxito en Vercel Blob a las ${timeStr}! Los cambios ya están disponibles en la nube.`
       );
-      setTimeout(() => setBlobSyncMessage(''), 5000);
+      setLastSyncedTime(timeStr);
+      localStorage.setItem('sr_blob_last_synced', timeStr);
+      if (json.url) {
+        setLastSyncedUrl(json.url);
+        localStorage.setItem('sr_blob_last_url', json.url);
+      }
+      return true;
+    } catch (err: any) {
+      setBlobSyncStatus('error');
+      setBlobSyncMessage(
+        `❌ Error al sincronizar: ${err.message || 'No se pudo guardar en Vercel Blob. Configura el token o actívalo en vercel.com.'}`
+      );
       return false;
     }
   };
 
   // Comprobar estado de conexión con Vercel Blob
-  const checkVercelBlobStatus = async () => {
+  const checkVercelBlobStatus = async (overrideToken?: unknown) => {
     setBlobSyncStatus('checking');
     setBlobSyncMessage('Comprobando conexión con Vercel Blob...');
     try {
-      const res = await fetch('/api/projects');
-      if (!res.ok) throw new Error('Error al conectar');
-      const json = await res.json();
-      if (json && json.warning) {
-        setBlobSyncStatus('not_connected');
-        setBlobSyncMessage('Vercel Blob no vinculado aún: añade BLOB_READ_WRITE_TOKEN en Vercel > Storage > Blob.');
-      } else {
-        setBlobSyncStatus('connected');
-        setBlobSyncMessage('🟢 ¡Conectado con Vercel Blob! Tus fotos, vídeos y proyectos se guardan automáticamente en la nube.');
+      const activeToken =
+        typeof overrideToken === 'string'
+          ? overrideToken.trim()
+          : (customBlobToken || localStorage.getItem('sr_vercel_blob_token') || '').trim();
+
+      const headers: Record<string, string> = {};
+      if (activeToken) {
+        headers['x-blob-token'] = activeToken;
       }
-    } catch {
+
+      const res = await fetch('/api/projects', { headers });
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || (json && json.error)) {
+        setBlobSyncStatus('error');
+        setBlobSyncMessage(
+          json?.error ||
+            `Error de conexión (Código ${res.status}). Verifica que tu token sea válido.`
+        );
+        return;
+      }
+
+      if (json && json.connected) {
+        setBlobSyncStatus('connected');
+        setBlobSyncMessage(
+          json.message ||
+            '🟢 ¡Conexión exitosa a tu Vercel Blob Store! Tus fotos, vídeos y datos se guardarán automáticamente en la nube.'
+        );
+        if (json.url) {
+          setLastSyncedUrl(json.url);
+          localStorage.setItem('sr_blob_last_url', json.url);
+        }
+      } else if (json && json.warning) {
+        setBlobSyncStatus('not_connected');
+        setBlobSyncMessage(
+          '🟡 Pendiente de vincular: No se detectó BLOB_READ_WRITE_TOKEN en el entorno ni en el panel. Pega tu token abajo para activarlo de inmediato o crea el Blob Store en Vercel.'
+        );
+      } else {
+        setBlobSyncStatus('not_connected');
+        setBlobSyncMessage(
+          json?.message ||
+            '⚪ Vercel Blob no conectado. Configura tu token para sincronización en la nube.'
+        );
+      }
+    } catch (err: any) {
+      setBlobSyncStatus('error');
+      setBlobSyncMessage(
+        `Error de red al consultar /api/projects: ${err.message || 'Error de conexión'}`
+      );
+    }
+  };
+
+  // Guardar Token personalizado de Vercel Blob
+  const handleSaveCustomToken = (tokenToSave?: string) => {
+    const val = typeof tokenToSave === 'string' ? tokenToSave : blobTokenInput;
+    const trimmed = val.trim();
+    setCustomBlobToken(trimmed);
+    setBlobTokenInput(trimmed);
+    localStorage.setItem('sr_vercel_blob_token', trimmed);
+    if (trimmed) {
+      checkVercelBlobStatus(trimmed);
+    } else {
       setBlobSyncStatus('not_connected');
-      setBlobSyncMessage('Sin conexión a /api/projects (normal al previsualizar en local). Al subir a Vercel funcionará automáticamente.');
+      setBlobSyncMessage('Token eliminado. Se utilizará la variable de entorno de Vercel si existe.');
+      checkVercelBlobStatus('');
     }
   };
 
@@ -1743,60 +1835,206 @@ export default function App() {
                 </div>
 
                 {/* Monitor de Estado y Conexión en Tiempo Real */}
-                <div className="bg-neutral-900 border border-white/15 rounded-xl p-5 sm:p-6 space-y-4">
-                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                    <div>
-                      <h4 className="text-xs font-mono uppercase tracking-wider text-white/50 mb-1">
-                        Estado de conexión con Vercel Blob
-                      </h4>
+                <div
+                  className={`border rounded-2xl p-5 sm:p-6 space-y-5 transition-all shadow-xl ${
+                    blobSyncStatus === 'connected' || blobSyncStatus === 'synced'
+                      ? 'bg-neutral-900/90 border-emerald-500/40 shadow-emerald-950/20'
+                      : blobSyncStatus === 'error'
+                        ? 'bg-neutral-900/90 border-red-500/40 shadow-red-950/20'
+                        : blobSyncStatus === 'checking' || blobSyncStatus === 'syncing'
+                          ? 'bg-neutral-900/90 border-amber-500/40 shadow-amber-950/20'
+                          : 'bg-neutral-900/90 border-white/15'
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                    <div className="space-y-1">
                       <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-white/50">
+                          Monitor de Estado en Vivo
+                        </span>
+                        {customBlobToken && (
+                          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/70 border border-emerald-800/40 px-2 py-0.2 rounded-full">
+                            Token configurado
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2.5">
                         <span
-                          className={`w-3 h-3 rounded-full ${
+                          className={`w-3.5 h-3.5 rounded-full shrink-0 ${
                             blobSyncStatus === 'connected' || blobSyncStatus === 'synced'
                               ? 'bg-emerald-400 animate-pulse'
                               : blobSyncStatus === 'syncing' || blobSyncStatus === 'checking'
                                 ? 'bg-amber-400 animate-spin'
-                                : 'bg-neutral-500'
+                                : blobSyncStatus === 'error'
+                                  ? 'bg-red-500'
+                                  : 'bg-amber-500'
                           }`}
                         />
-                        <span className="text-sm font-medium text-white">
+                        <h4 className="text-sm sm:text-base font-semibold text-white">
                           {blobSyncStatus === 'connected'
-                            ? '🟢 Conectado con Vercel Blob (Subida automática activa)'
+                            ? '🟢 Conectado con Vercel Blob (Almacenamiento Activo)'
                             : blobSyncStatus === 'synced'
-                              ? '🟢 ¡Portfolio sincronizado en la nube!'
+                              ? '🟢 ¡Portfolio sincronizado con éxito en la nube!'
                               : blobSyncStatus === 'syncing'
-                                ? '⏳ Sincronizando con Vercel Blob...'
+                                ? '⏳ Sincronizando datos con Vercel Blob...'
                                 : blobSyncStatus === 'checking'
-                                  ? '⏳ Comprobando conexión...'
-                                  : '⚪ En espera de conexión (Modo local / Despliegue)'}
-                        </span>
+                                  ? '⏳ Comprobando conexión con Vercel Blob...'
+                                  : blobSyncStatus === 'error'
+                                    ? '🔴 Error de conexión con Vercel Blob'
+                                    : '🟡 Pendiente de conexión (Token requerido para pruebas)'}
+                        </h4>
                       </div>
-                      {blobSyncMessage && (
-                        <p className="text-xs text-white/70 mt-1.5 font-mono bg-black/40 p-2 rounded-lg border border-white/5">
-                          {blobSyncMessage}
-                        </p>
-                      )}
                     </div>
 
-                    <div className="flex flex-wrap gap-2 shrink-0">
+                    <div className="flex flex-wrap gap-2.5 shrink-0">
                       <button
                         type="button"
-                        onClick={checkVercelBlobStatus}
-                        className="bg-white/10 hover:bg-white/20 text-white text-xs px-3.5 py-2 rounded-lg transition-colors cursor-pointer border border-white/15 flex items-center gap-1.5"
+                        onClick={() => checkVercelBlobStatus()}
+                        disabled={blobSyncStatus === 'checking' || blobSyncStatus === 'syncing'}
+                        className="bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer border border-white/15 flex items-center gap-2 font-medium"
                       >
-                        <span>🔄</span>
-                        <span>Comprobar conexión</span>
+                        <span className={blobSyncStatus === 'checking' ? 'animate-spin' : ''}>
+                          🔄
+                        </span>
+                        <span>
+                          {blobSyncStatus === 'checking'
+                            ? 'Comprobando...'
+                            : 'Comprobar conexión'}
+                        </span>
                       </button>
                       <button
                         type="button"
                         onClick={() => syncPortfolioToVercelBlob()}
-                        className="bg-white text-black hover:bg-white/90 text-xs font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer shadow flex items-center gap-1.5"
+                        disabled={blobSyncStatus === 'checking' || blobSyncStatus === 'syncing'}
+                        className="bg-white text-black hover:bg-white/90 disabled:opacity-50 text-xs font-semibold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-lg flex items-center gap-2"
                       >
-                        <span>☁️</span>
-                        <span>Sincronizar proyectos ahora</span>
+                        <span className={blobSyncStatus === 'syncing' ? 'animate-spin' : ''}>
+                          ☁️
+                        </span>
+                        <span>
+                          {blobSyncStatus === 'syncing'
+                            ? 'Sincronizando...'
+                            : 'Sincronizar proyectos ahora'}
+                        </span>
                       </button>
                     </div>
                   </div>
+
+                  {/* Mensaje detallado del servidor */}
+                  {blobSyncMessage && (
+                    <div
+                      className={`p-3.5 rounded-xl text-xs font-mono border leading-relaxed ${
+                        blobSyncStatus === 'connected' || blobSyncStatus === 'synced'
+                          ? 'bg-emerald-950/40 border-emerald-800/50 text-emerald-200'
+                          : blobSyncStatus === 'error'
+                            ? 'bg-red-950/40 border-red-800/50 text-red-200'
+                            : blobSyncStatus === 'checking' || blobSyncStatus === 'syncing'
+                              ? 'bg-amber-950/40 border-amber-800/50 text-amber-200'
+                              : 'bg-black/50 border-white/10 text-white/80'
+                      }`}
+                    >
+                      {blobSyncMessage}
+                    </div>
+                  )}
+
+                  {/* Fila de metadatos de sincronización */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-white/10 text-xs">
+                    <div className="bg-black/30 p-2.5 rounded-lg border border-white/5">
+                      <span className="text-[10px] font-mono uppercase text-white/50 block">
+                        Destino en la nube
+                      </span>
+                      <span className="font-mono text-white/90 truncate block mt-0.5">
+                        portfolio-data.json
+                      </span>
+                    </div>
+                    <div className="bg-black/30 p-2.5 rounded-lg border border-white/5">
+                      <span className="text-[10px] font-mono uppercase text-white/50 block">
+                        Última sincronización
+                      </span>
+                      <span className="font-mono text-white/90 truncate block mt-0.5">
+                        {lastSyncedTime ? `Hoy a las ${lastSyncedTime}` : 'Sin registrar'}
+                      </span>
+                    </div>
+                    <div className="bg-black/30 p-2.5 rounded-lg border border-white/5">
+                      <span className="text-[10px] font-mono uppercase text-white/50 block">
+                        Enlace de datos CDN
+                      </span>
+                      {lastSyncedUrl ? (
+                        <a
+                          href={lastSyncedUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-emerald-400 hover:underline truncate block mt-0.5"
+                        >
+                          Ver JSON público ↗
+                        </a>
+                      ) : (
+                        <span className="font-mono text-white/40 block mt-0.5">
+                          Disponible tras sincronizar
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Gestor y Configuración del Token de Vercel Blob */}
+                <div className="bg-neutral-900 border border-white/15 rounded-xl p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                    <div>
+                      <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                        <span>🔑</span>
+                        <span>Token de Vercel Blob (BLOB_READ_WRITE_TOKEN)</span>
+                      </h4>
+                      <p className="text-xs text-white/60 mt-0.5">
+                        Conecta tu Blob Store directamente pegando tu token aquí para probarlo ahora mismo.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowTokenInput(!showTokenInput)}
+                      className="text-xs text-emerald-400 hover:text-emerald-300 underline underline-offset-2 cursor-pointer self-start sm:self-auto"
+                    >
+                      {showTokenInput ? '✕ Ocultar configuración de token' : '⚙️ Configurar o cambiar token'}
+                    </button>
+                  </div>
+
+                  {showTokenInput && (
+                    <div className="p-4 bg-black/50 border border-white/10 rounded-xl space-y-3 animate-fade-in">
+                      <label className="block text-xs font-medium text-white/80">
+                        Pega tu BLOB_READ_WRITE_TOKEN de Vercel:
+                      </label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="password"
+                          value={blobTokenInput}
+                          onChange={(e) => setBlobTokenInput(e.target.value)}
+                          placeholder="vercel_blob_rw_..."
+                          className="flex-1 bg-neutral-950 border border-white/20 rounded-lg px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-white transition-colors"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveCustomToken()}
+                          className="bg-white text-black hover:bg-white/90 text-xs font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer shrink-0"
+                        >
+                          Guardar y Comprobar
+                        </button>
+                        {customBlobToken && (
+                          <button
+                            type="button"
+                            onClick={() => handleSaveCustomToken('')}
+                            className="bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs px-3 py-2 rounded-lg border border-red-500/30 transition-colors cursor-pointer shrink-0"
+                          >
+                            Eliminar
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-white/50 leading-relaxed">
+                        🔒 Este token se almacena únicamente en tu navegador para permitirte sincronizar y subir archivos en vivo. Al desplegar en Vercel, la plataforma inyecta automáticamente este token sin que tengas que ingresarlo manualmente.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Flujo Automático Paso a Paso */}

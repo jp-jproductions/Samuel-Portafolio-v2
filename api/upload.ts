@@ -1,8 +1,6 @@
 import { put } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 
-
-
 export default async function handler(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -13,6 +11,10 @@ export default async function handler(request: Request): Promise<Response> {
 
   const { searchParams } = new URL(request.url);
   const filename = searchParams.get('filename');
+  const token =
+    request.headers.get('x-blob-token') ||
+    request.headers.get('Authorization')?.replace('Bearer ', '') ||
+    process.env.BLOB_READ_WRITE_TOKEN;
 
   // =========================================================================
   // MÉTODO 1: SERVER UPLOAD DIRECTO (El método simple con ?filename=...)
@@ -28,7 +30,16 @@ export default async function handler(request: Request): Promise<Response> {
         });
       }
 
-      const token = process.env.BLOB_READ_WRITE_TOKEN;
+      if (!token) {
+        return new Response(
+          JSON.stringify({
+            error:
+              'No se encontró la variable de entorno BLOB_READ_WRITE_TOKEN en Vercel ni un token configurado en el panel.',
+          }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
       const cleanFileName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
       const blob = await put(cleanFileName, request.body, {
         access: 'public',
@@ -58,7 +69,8 @@ export default async function handler(request: Request): Promise<Response> {
     const jsonResponse = await handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async (pathname: string) => {
+      token,
+      onBeforeGenerateToken: async () => {
         return {
           allowedContentTypes: [
             'image/jpeg',
