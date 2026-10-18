@@ -1,5 +1,15 @@
 import { list, put, head } from '@vercel/blob';
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error) || 'Error desconocido de Vercel Blob';
+  } catch {
+    return 'Error desconocido de Vercel Blob';
+  }
+}
+
 export default async function handler(request: Request): Promise<Response> {
   const rawToken =
     request.headers.get('x-blob-token') ||
@@ -156,10 +166,20 @@ export default async function handler(request: Request): Promise<Response> {
         }
       );
     } catch (err) {
+      console.error('No se pudo sincronizar portfolio-data.json con Vercel Blob:', {
+        name: err instanceof Error ? err.name : typeof err,
+        message: getErrorMessage(err),
+        statusCode:
+          typeof err === 'object' && err !== null && 'statusCode' in err
+            ? err.statusCode
+            : undefined,
+        code:
+          typeof err === 'object' && err !== null && 'code' in err ? err.code : undefined,
+      });
       return new Response(
         JSON.stringify({
           success: false,
-          error: (err as Error).message,
+          error: getErrorMessage(err),
         }),
         {
           status: 500,

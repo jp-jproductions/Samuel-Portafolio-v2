@@ -716,11 +716,25 @@ export default function App() {
         body: JSON.stringify(payload),
       });
 
-      const json = await res.json().catch(() => ({}));
+      const responseText = await res.text();
+      let json: { success?: boolean; error?: string; url?: string } = {};
+      try {
+        json = JSON.parse(responseText);
+      } catch {
+        // Some platform failures return an HTML or plain-text response instead of JSON.
+      }
 
       if (!res.ok || !json.success) {
+        const responseError = responseText
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 300);
         throw new Error(
-          json.error || `Error HTTP ${res.status} al sincronizar con Vercel Blob`
+          json.error ||
+            (responseError && responseError !== '[object Object]'
+              ? `Error HTTP ${res.status}: ${responseError}`
+              : `Error HTTP ${res.status} al sincronizar con Vercel Blob`)
         );
       }
 
