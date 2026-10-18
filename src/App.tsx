@@ -273,6 +273,16 @@ export default function App() {
   >(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
   const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [lightboxPhoto, setLightboxPhoto] = useState<{ url: string; name: string } | null>(null);
+
+  useEffect(() => {
+    if (!lightboxPhoto) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxPhoto(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxPhoto]);
   const [projectMediaFilter, setProjectMediaFilter] = useState<
     'all' | 'foto' | 'video' | 'pdf'
   >('all');
@@ -996,6 +1006,35 @@ export default function App() {
         className="fixed inset-0 z-0 w-full h-full object-cover pointer-events-none"
         style={{ objectPosition: '70% center' }}
       />
+
+      {lightboxPhoto && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={lightboxPhoto.name}
+          onClick={() => setLightboxPhoto(null)}
+          className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center p-4 sm:p-8 cursor-zoom-out"
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxPhoto(null)}
+            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors cursor-pointer"
+            aria-label="Cerrar"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+          <img
+            src={lightboxPhoto.url}
+            alt={lightboxPhoto.name}
+            onClick={(e) => e.stopPropagation()}
+            className="block w-auto h-auto max-w-full max-h-[85vh] object-contain rounded-lg cursor-default"
+          />
+          <p className="mt-3 text-xs text-white/60 truncate max-w-full">{lightboxPhoto.name}</p>
+        </div>
+      )}
 
       {/* Subtle overlay gradient to ensure high legibility */}
       <div
@@ -2752,21 +2791,34 @@ export default function App() {
                             key={m.id}
                             className="group relative rounded-xl overflow-hidden bg-neutral-900 border border-white/10"
                           >
-                            <img
-                              src={m.url}
-                              alt={m.name}
-                              className="w-full h-56 object-cover transition-transform duration-300 group-hover:scale-102"
-                            />
+                            <button
+                              type="button"
+                              onClick={() => setLightboxPhoto({ url: m.url, name: m.name })}
+                              className="block w-full cursor-zoom-in overflow-hidden"
+                              aria-label={`Ampliar ${m.name}`}
+                            >
+                              <img
+                                src={m.url}
+                                alt={m.name}
+                                className="w-full h-56 object-cover transition-transform duration-300 group-hover:scale-105"
+                              />
+                            </button>
                             <div className="p-2.5 flex justify-between items-center text-xs text-white/70 bg-neutral-950">
                               <span className="truncate">{m.name}</span>
-                              <a
-                                href={m.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-white hover:underline ml-2 shrink-0"
+                              <button
+                                type="button"
+                                onClick={() => setLightboxPhoto({ url: m.url, name: m.name })}
+                                className="ml-2 shrink-0 p-1.5 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                                aria-label={`Ver ${m.name} en grande`}
+                                title="Ver en grande"
                               >
-                                Ver original ↗
-                              </a>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <polyline points="15 3 21 3 21 9" />
+                                  <polyline points="9 21 3 21 3 15" />
+                                  <line x1="21" y1="3" x2="14" y2="10" />
+                                  <line x1="3" y1="21" x2="10" y2="14" />
+                                </svg>
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -2781,7 +2833,7 @@ export default function App() {
                     <h4 className="text-xs font-mono uppercase text-white/50 mb-3 flex items-center gap-1.5">
                       <span>🎬 Vídeos</span>
                     </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
                       {activeProject.media
                         .filter((m) => m.type === 'video')
                         .map((m) => (
@@ -2789,11 +2841,15 @@ export default function App() {
                             key={m.id}
                             className="rounded-xl overflow-hidden bg-neutral-900 border border-white/10 flex flex-col"
                           >
-                            <video
-                              src={m.url}
-                              controls
-                              className="w-full h-64 bg-black object-cover"
-                            />
+                            <div className="bg-black flex justify-center">
+                              <video
+                                src={m.url}
+                                controls
+                                playsInline
+                                preload="metadata"
+                                className="block w-auto h-auto max-w-full max-h-[70vh]"
+                              />
+                            </div>
                             <div className="p-2.5 text-xs text-white/80 bg-neutral-950 flex justify-between items-center">
                               <span className="truncate">{m.name}</span>
                             </div>
