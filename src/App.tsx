@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { upload } from '@vercel/blob/client';
 
 const VIDEO_URL = '/background-video.mp4';
+const MOBILE_VIDEO_URL = '/background-video-mobile.mp4';
 const FALLBACK_VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260826_041744_63efcd78-bf7d-4039-99e2-2461e8a61903.mp4';
 
@@ -188,6 +189,9 @@ export default function App() {
   const prevXRef = useRef<number | null>(null);
 
   const [videoSrc, setVideoSrc] = useState<string>(VIDEO_URL);
+  const [isMobile, setIsMobile] = useState(() =>
+    window.matchMedia('(max-width: 767px)').matches
+  );
   const [cvPdfUrl, setCvPdfUrl] = useState<string>(() => {
     return localStorage.getItem('sr_cv_pdf_url') || DEFAULT_CV_URL;
   });
@@ -332,6 +336,18 @@ export default function App() {
     return localStorage.getItem('sr_blob_last_url') || '';
   });
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const updateIsMobile = () => setIsMobile(mediaQuery.matches);
+    updateIsMobile();
+    mediaQuery.addEventListener('change', updateIsMobile);
+    return () => mediaQuery.removeEventListener('change', updateIsMobile);
+  }, []);
+
+  useEffect(() => {
+    setVideoSrc(isMobile ? MOBILE_VIDEO_URL : VIDEO_URL);
+  }, [isMobile]);
+
   // File Inputs
   const adminFileInputRef = useRef<HTMLInputElement>(null);
   const projectDetailFileInputRef = useRef<HTMLInputElement>(null);
@@ -451,6 +467,11 @@ export default function App() {
 
   // Video Scrubbing (Left = Forward, Right = Rewind)
   useEffect(() => {
+    if (isMobile) {
+      prevXRef.current = null;
+      return;
+    }
+
     const SENSITIVITY = 0.8;
 
     const applyScrubDelta = (delta: number) => {
@@ -520,7 +541,7 @@ export default function App() {
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleTouchEnd);
     };
-  }, []);
+  }, [isMobile]);
 
   // Admin PIN verification
   const handlePinSubmit = (e: React.FormEvent) => {
@@ -1113,11 +1134,15 @@ export default function App() {
         src={videoSrc}
         muted
         playsInline
+        autoPlay={isMobile}
+        loop={isMobile}
         preload="auto"
         onLoadedMetadata={handleLoadedMetadata}
         onSeeked={handleSeeked}
         onError={() => {
-          if (videoSrc !== FALLBACK_VIDEO_URL) {
+          if (videoSrc === MOBILE_VIDEO_URL) {
+            setVideoSrc(VIDEO_URL);
+          } else if (videoSrc !== FALLBACK_VIDEO_URL) {
             setVideoSrc(FALLBACK_VIDEO_URL);
           }
         }}
