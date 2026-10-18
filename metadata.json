@@ -1,0 +1,7 @@
+{
+  "name": "Mainframe",
+  "description": "Portafolio personal de Samuel Restrepo para gestionar proyectos con fotos, vídeos y documentos PDF, con fondo interactivo controlado por el cursor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
