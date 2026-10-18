@@ -355,6 +355,52 @@ export default function App() {
     localStorage.setItem('sr_hero_texts', JSON.stringify(heroTexts));
   }, [heroTexts]);
 
+  // Cargar el portafolio guardado en Vercel Blob (fuente de verdad compartida)
+  const [remoteReady, setRemoteReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/projects', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !json?.data) return;
+        const data = json.data;
+        if (Array.isArray(data.projects)) {
+          setProjects(
+            data.projects.map((p: Project) => ({ ...p, date: normalizeSemester(p.date) }))
+          );
+        }
+        if (Array.isArray(data.categories) && data.categories.length) {
+          setCategories(data.categories);
+        }
+        if (data.heroTexts) {
+          const merged = { ...DEFAULT_HERO_TEXTS, ...data.heroTexts };
+          setHeroTexts(merged);
+          setEditHeroTexts(merged);
+        }
+        if (typeof data.cvPdfUrl === 'string' && data.cvPdfUrl) {
+          setCvPdfUrl(data.cvPdfUrl);
+        }
+      })
+      .catch((err) => console.warn('No se pudo cargar el portafolio desde Vercel Blob:', err))
+      .finally(() => {
+        if (!cancelled) setRemoteReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Autoguardado en Vercel Blob cuando el administrador hace cambios
+  const syncRef = useRef<() => Promise<boolean>>(async () => false);
+  useEffect(() => {
+    if (!remoteReady || !isAdmin) return;
+    const timer = setTimeout(() => {
+      syncRef.current();
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [projects, categories, heroTexts, cvPdfUrl, remoteReady, isAdmin]);
+
   // Typewriter bound to editable hero text
   const { displayed, done: typewriterDone } = useTypewriter(
     heroTexts.typewriterText,
@@ -688,6 +734,8 @@ export default function App() {
       return false;
     }
   };
+
+  syncRef.current = () => syncPortfolioToVercelBlob();
 
   // Comprobar estado de conexión con Vercel Blob
   const checkVercelBlobStatus = async (overrideToken?: unknown) => {

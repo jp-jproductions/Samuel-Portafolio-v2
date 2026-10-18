@@ -84,7 +84,7 @@ export default async function handler(request: Request): Promise<Response> {
       }
 
       // Obtener el contenido actualizado sin caché
-      const response = await fetch(blobMeta.url, { cache: 'no-store' });
+      const response = await fetch(`${blobMeta.url}?t=${Date.now()}`, { cache: 'no-store' });
       const data = await response.json();
 
       return new Response(
@@ -138,6 +138,8 @@ export default async function handler(request: Request): Promise<Response> {
       const blob = await put('portfolio-data.json', JSON.stringify(body, null, 2), {
         access: 'public',
         addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 60,
         contentType: 'application/json',
         token,
       });
