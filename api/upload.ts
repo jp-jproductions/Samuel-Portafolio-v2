@@ -1,9 +1,7 @@
 import { put } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 
-export const config = {
-  runtime: 'edge',
-};
+
 
 export default async function handler(request: Request): Promise<Response> {
   if (request.method !== 'POST') {

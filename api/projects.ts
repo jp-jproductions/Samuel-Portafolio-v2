@@ -1,8 +1,6 @@
 import { put, head } from '@vercel/blob';
 
-export const config = {
-  runtime: 'edge',
-};
+
 
 export default async function handler(request: Request): Promise<Response> {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
