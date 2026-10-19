@@ -33,7 +33,18 @@ function vercelApiDev(): Plugin {
           const response: Response = await mod.default.fetch(request);
           res.statusCode = response.status;
           response.headers.forEach((value, key) => res.setHeader(key, value));
-          res.end(Buffer.from(await response.arrayBuffer()));
+          if (!response.body) {
+            res.end();
+            return;
+          }
+          // Se reenvía el cuerpo por partes para que las respuestas en streaming (chat IA) lleguen en tiempo real.
+          const reader = response.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(Buffer.from(value));
+          }
+          res.end();
         } catch (error) {
           res.statusCode = 500;
           res.setHeader('Content-Type', 'application/json');
@@ -48,6 +59,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   if (env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_READ_WRITE_TOKEN) {
     process.env.BLOB_READ_WRITE_TOKEN = env.BLOB_READ_WRITE_TOKEN;
+  }
+  for (const key of ['AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN']) {
+    if (env[key] && !process.env[key]) process.env[key] = env[key];
   }
 
   return {

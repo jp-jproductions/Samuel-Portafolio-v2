@@ -11,10 +11,12 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/react": "^4.0.147",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vercel/blob": "^2.3.1",
     "@vitejs/plugin-react": "^6.1.1",
+    "ai": "^7.0.143",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
