@@ -34,13 +34,6 @@ async function handler(request: Request): Promise<Response> {
     return Response.json({ error: 'Método no permitido.' }, { status: 405, headers: JSON_HEADERS });
   }
 
-  if (!process.env.PORTFOLIO_ADMIN_PASSWORD) {
-    return Response.json(
-      { error: 'El acceso de administrador no está configurado en el servidor.' },
-      { status: 503, headers: JSON_HEADERS }
-    );
-  }
-
   try {
     const body = (await request.json()) as { password?: unknown };
     if (typeof body.password !== 'string' || !isValidAdminPassword(body.password)) {

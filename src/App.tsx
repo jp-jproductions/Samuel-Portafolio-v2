@@ -1551,7 +1551,7 @@ export default function App() {
               Acceso de Administrador
             </h3>
             <p className="text-xs text-white/60 mb-5">
-              Panel reservado para Samuel Restrepo. Ingresa tu contraseña de administrador.
+              Panel reservado para Samuel Restrepo. Ingresa tu PIN de administrador.
             </p>
 
             <form onSubmit={handleAdminLogin} className="space-y-4">
@@ -1559,7 +1559,9 @@ export default function App() {
                 <input
                   type="password"
                   autoFocus
-                  placeholder="Contraseña..."
+                  inputMode="numeric"
+                  maxLength={4}
+                  placeholder="PIN..."
                   value={adminPassword}
                   onChange={(e) => {
                     setAdminPassword(e.target.value);

@@ -30,8 +30,9 @@ Configure these server-side environment variables in Vercel:
 
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
-- `PORTFOLIO_ADMIN_PASSWORD` (choose a strong password)
+- `PORTFOLIO_ADMIN_PASSWORD` (optional; the administrator PIN `7374` remains enabled)
 
 Keep all secrets out of client-side code and source control. The Supabase service
-role key and administrator password are only used by Vercel Functions. After
-setting variables or applying SQL, redeploy the project.
+role key and administrator password are only used by Vercel Functions. The
+four-digit PIN is retained for compatibility but is not suitable for production
+security. After setting variables or applying SQL, redeploy the project.
