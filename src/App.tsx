@@ -5,6 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { upload } from '@vercel/blob/client';
+import ChatBot from './components/ChatBot';
 
 const VIDEO_URL = '/background-video.mp4';
 const MOBILE_VIDEO_URL = '/background-video-mobile.mp4';
@@ -1540,6 +1541,8 @@ export default function App() {
         </div>
       </main>
 
+      <ChatBot projects={projects} />
+
       {/* PIN AUTHENTICATION MODAL (Acceso oculto con PIN: 7374) */}
       {showPinModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
@@ -2347,7 +2350,7 @@ export default function App() {
                           onClick={() => setShowTokenChars(!showTokenChars)}
                           className="text-[11px] text-white/50 hover:text-white cursor-pointer"
                         >
-                          {showTokenChars ? '🙈 Ocultar' : '👁️ Ver caracteres'}
+                          {showTokenChars ? '��� Ocultar' : '👁️ Ver caracteres'}
                         </button>
                       </div>
 
