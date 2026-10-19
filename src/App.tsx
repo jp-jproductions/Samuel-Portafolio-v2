@@ -407,32 +407,32 @@ export default function App() {
         return res.json();
       })
       .then((json) => {
-        if (cancelled || !json?.data) return;
+        if (cancelled || json?.connected !== true) return;
         const data = json.data;
-        if (Array.isArray(data.projects)) {
-          setProjects(
-            data.projects.map((p: ProjectWithLegacyCategory) => ({
-              ...normalizeProjectCategories(p),
-              date: normalizeSemester(p.date),
-            }))
-          );
+        if (data) {
+          if (Array.isArray(data.projects)) {
+            setProjects(
+              data.projects.map((p: ProjectWithLegacyCategory) => ({
+                ...normalizeProjectCategories(p),
+                date: normalizeSemester(p.date),
+              }))
+            );
+          }
+          if (Array.isArray(data.categories) && data.categories.length) {
+            setCategories(data.categories);
+          }
+          if (data.heroTexts) {
+            const merged = { ...DEFAULT_HERO_TEXTS, ...data.heroTexts };
+            setHeroTexts(merged);
+            setEditHeroTexts(merged);
+          }
+          if (typeof data.cvPdfUrl === 'string' && data.cvPdfUrl) {
+            setCvPdfUrl(data.cvPdfUrl);
+          }
         }
-        if (Array.isArray(data.categories) && data.categories.length) {
-          setCategories(data.categories);
-        }
-        if (data.heroTexts) {
-          const merged = { ...DEFAULT_HERO_TEXTS, ...data.heroTexts };
-          setHeroTexts(merged);
-          setEditHeroTexts(merged);
-        }
-        if (typeof data.cvPdfUrl === 'string' && data.cvPdfUrl) {
-          setCvPdfUrl(data.cvPdfUrl);
-        }
+        setRemoteReady(true);
       })
-      .catch((err) => console.warn('No se pudo cargar el portafolio desde Vercel Blob:', err))
-      .finally(() => {
-        if (!cancelled) setRemoteReady(true);
-      });
+      .catch((err) => console.warn('No se pudo cargar el portafolio desde Vercel Blob:', err));
     return () => {
       cancelled = true;
     };
@@ -883,6 +883,7 @@ export default function App() {
       );
       setProjectSaveMessage('Cambios guardados en este navegador y sincronizados con Vercel Blob.');
       setLastSyncedTime(timeStr);
+      setRemoteReady(true);
       localStorage.setItem('sr_blob_last_synced', timeStr);
       if (json.url) {
         setLastSyncedUrl(json.url);
@@ -922,6 +923,7 @@ export default function App() {
       const json = await res.json().catch(() => null);
 
       if (!res.ok || (json && json.error)) {
+        setRemoteReady(false);
         setBlobSyncStatus('error');
         setBlobSyncMessage(
           json?.error ||
@@ -931,6 +933,7 @@ export default function App() {
       }
 
       if (json && json.connected) {
+        setRemoteReady(true);
         if (json.data) {
           const data = json.data;
           if (Array.isArray(data.projects)) {
@@ -956,18 +959,20 @@ export default function App() {
         setBlobSyncStatus('connected');
         setBlobSyncMessage(
           json.message ||
-            '🟢 ¡Conexión exitosa a tu Vercel Blob Store! Tus fotos, vídeos y datos se guardarán automáticamente en la nube.'
+            '🟢 Vercel Blob está conectado. Los datos y PDF se guardan allí; las fotos, vídeos y portadas se cargan en Cloudinary.'
         );
         if (json.url) {
           setLastSyncedUrl(json.url);
           localStorage.setItem('sr_blob_last_url', json.url);
         }
       } else if (json && json.warning) {
+        setRemoteReady(false);
         setBlobSyncStatus('not_connected');
         setBlobSyncMessage(
           '🟡 Pendiente de vincular: No se detectó BLOB_READ_WRITE_TOKEN en el entorno ni en el panel. Pega tu token abajo para activarlo de inmediato o crea el Blob Store en Vercel.'
         );
       } else {
+        setRemoteReady(false);
         setBlobSyncStatus('not_connected');
         setBlobSyncMessage(
           json?.message ||
@@ -975,6 +980,7 @@ export default function App() {
         );
       }
     } catch (err: any) {
+      setRemoteReady(false);
       setBlobSyncStatus('error');
       setBlobSyncMessage(
         `Error de red al consultar /api/projects: ${err.message || 'Error de conexión'}`
@@ -1206,8 +1212,7 @@ export default function App() {
       setProjects(updatedList);
     }
 
-    // Los metadatos se guardan en el navegador. Los archivos viven en /public
-    // y se publican junto al sitio al desplegarlo.
+    // Los archivos se guardan en su proveedor y sus URL se sincronizan con el portfolio.
     setProjectSaveMessage('Cambios guardados en este navegador.');
 
     setActiveModal('admin');

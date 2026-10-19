@@ -1,4 +1,4 @@
-import { list, put, head } from '@vercel/blob';
+import { list, put } from '@vercel/blob';
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -53,9 +53,11 @@ async function handler(request: Request): Promise<Response> {
         );
       }
 
-      // 1. Probar validez del token en Vercel Blob mediante list({ limit: 1 })
+      // 1. Probar el token y localizar el JSON de datos en Vercel Blob.
+      let blobUrl: string | undefined;
       try {
-        await list({ limit: 1, token });
+        const { blobs } = await list({ prefix: 'portfolio-data.json', limit: 1, token });
+        blobUrl = blobs.find((blob) => blob.pathname === 'portfolio-data.json')?.url;
       } catch (listErr: any) {
         return new Response(
           JSON.stringify({
@@ -69,16 +71,7 @@ async function handler(request: Request): Promise<Response> {
         );
       }
 
-      // 2. Si el token es válido, verificar si ya existe portfolio-data.json
-      let blobMeta = null;
-      try {
-        blobMeta = await head('portfolio-data.json', { token });
-      } catch {
-        // Archivo no creado aún
-        blobMeta = null;
-      }
-
-      if (!blobMeta) {
+      if (!blobUrl) {
         return new Response(
           JSON.stringify({
             connected: true,
@@ -94,14 +87,17 @@ async function handler(request: Request): Promise<Response> {
       }
 
       // Obtener el contenido actualizado sin caché
-      const response = await fetch(`${blobMeta.url}?t=${Date.now()}`, { cache: 'no-store' });
+      const response = await fetch(`${blobUrl}?t=${Date.now()}`, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`No se pudo leer portfolio-data.json (HTTP ${response.status})`);
+      }
       const data = await response.json();
 
       return new Response(
         JSON.stringify({
           connected: true,
           data,
-          url: blobMeta.url,
+          url: blobUrl,
           message: '🟢 Conectado a Vercel Blob. Datos sincronizados correctamente.',
         }),
         {

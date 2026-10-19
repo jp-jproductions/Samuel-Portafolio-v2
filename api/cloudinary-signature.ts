@@ -43,7 +43,7 @@ async function handler(request: Request): Promise<Response> {
     const params = {
       folder: 'portfolio-assets',
       public_id: randomUUID(),
-      timestamp: Math.floor(Date.now() / 1000).toString(),
+      timestamp: Math.floor(Date.now() / 1000),
     };
     const paramsToSign = Object.entries(params)
       .sort(([left], [right]) => left.localeCompare(right))
