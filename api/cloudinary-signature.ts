@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { requireAdminSession } from '../lib/admin-session';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -18,8 +17,6 @@ async function handler(request: Request): Promise<Response> {
       headers: JSON_HEADERS,
     });
   }
-  const unauthorized = requireAdminSession(request);
-  if (unauthorized) return unauthorized;
 
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
   const apiKey = process.env.CLOUDINARY_API_KEY;

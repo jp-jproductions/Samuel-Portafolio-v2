@@ -4,11 +4,14 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { upload } from '@vercel/blob/client';
 
 const VIDEO_URL = '/background-video.mp4';
 const MOBILE_VIDEO_URL = '/background-video-mobile.mp4';
 const FALLBACK_VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260826_041744_63efcd78-bf7d-4039-99e2-2461e8a61903.mp4';
+
+const OWNER_PIN = '7374';
 
 const TYPEWRITER_TEXT =
   'Explora mis proyectos, series fotográficas y producciones multimedia. ¿Qué proyecto revisamos hoy?';
@@ -225,11 +228,13 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [buttonsVisible, setButtonsVisible] = useState(false);
 
-  // Administrator authentication state
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [showAdminLoginModal, setShowAdminLoginModal] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminLoginError, setAdminLoginError] = useState(false);
+  // Authentication State (PIN: 7374)
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
+    return sessionStorage.getItem('sr_admin_auth') === 'true';
+  });
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [enteredPin, setEnteredPin] = useState('');
+  const [pinError, setPinError] = useState(false);
 
   // Dynamic Categories (stored in localStorage)
   const [categories, setCategories] = useState<string[]>(() => {
@@ -302,8 +307,9 @@ export default function App() {
 
   // Admin tabs
   const [adminTab, setAdminTab] = useState<
-    'projects' | 'categories' | 'hero' | 'cv' | 'storage'
+    'projects' | 'categories' | 'hero' | 'cv' | 'blob'
   >('projects');
+  const [copiedConfigNotice, setCopiedConfigNotice] = useState(false);
   const jsonImportInputRef = useRef<HTMLInputElement>(null);
 
 
@@ -320,45 +326,31 @@ export default function App() {
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [coverError, setCoverError] = useState('');
 
-  // Estado de subida de archivos y sincronización de datos.
+  // Estados heredados para compatibilidad con sesiones previas. Los medios se
+  // gestionan exclusivamente mediante rutas de /public.
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState('');
   const [blobUploadNotice, setBlobUploadNotice] = useState('');
   const [blobUploadHasError, setBlobUploadHasError] = useState(false);
-  const [storageSyncStatus, setStorageSyncStatus] = useState<
+  const [blobSyncStatus, setBlobSyncStatus] = useState<
     'idle' | 'checking' | 'connected' | 'not_connected' | 'syncing' | 'synced' | 'error'
   >('idle');
-  const [storageSyncMessage, setStorageSyncMessage] = useState('');
+  const [blobSyncMessage, setBlobSyncMessage] = useState('');
   const [projectSaveMessage, setProjectSaveMessage] = useState('');
-  const [lastSyncedTime, setLastSyncedTime] = useState<string>(() => {
-    return (
-      localStorage.getItem('sr_supabase_last_synced') ||
-      localStorage.getItem('sr_blob_last_synced') ||
-      ''
-    );
+  const [customBlobToken, setCustomBlobToken] = useState(() => {
+    return localStorage.getItem('sr_vercel_blob_token') || '';
   });
-
-  useEffect(() => {
-    localStorage.removeItem('sr_vercel_blob_token');
-    localStorage.removeItem('sr_blob_last_url');
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/admin-session', { cache: 'no-store' })
-      .then((response) => response.json())
-      .then((data) => {
-        if (cancelled) return;
-        setIsAdmin(data.authenticated === true);
-      })
-      .catch((error) => {
-        console.error('No se pudo comprobar la sesión de administrador:', error);
-        if (!cancelled) setIsAdmin(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const [blobTokenInput, setBlobTokenInput] = useState(() => {
+    return localStorage.getItem('sr_vercel_blob_token') || '';
+  });
+  const [showTokenInput, setShowTokenInput] = useState(true);
+  const [showTokenChars, setShowTokenChars] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState<string>(() => {
+    return localStorage.getItem('sr_blob_last_synced') || '';
+  });
+  const [lastSyncedUrl, setLastSyncedUrl] = useState<string>(() => {
+    return localStorage.getItem('sr_blob_last_url') || '';
+  });
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 767px)');
@@ -399,11 +391,15 @@ export default function App() {
     localStorage.setItem('sr_hero_texts', JSON.stringify(heroTexts));
   }, [heroTexts]);
 
-  // Cargar el portafolio guardado en Supabase (fuente de verdad compartida)
+  // Cargar el portafolio guardado en Vercel Blob (fuente de verdad compartida)
   const [remoteReady, setRemoteReady] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/portfolio', { cache: 'no-store' })
+    const savedToken = localStorage.getItem('sr_vercel_blob_token')?.trim();
+    const headers: Record<string, string> = {};
+    if (savedToken) headers['x-blob-token'] = savedToken;
+
+    fetch('/api/projects', { cache: 'no-store', headers })
       .then(async (res) => {
         if (!res.ok) {
           throw new Error(`Error HTTP ${res.status} al cargar el portafolio`);
@@ -433,17 +429,17 @@ export default function App() {
           setCvPdfUrl(data.cvPdfUrl);
         }
       })
-      .then(() => {
+      .catch((err) => console.warn('No se pudo cargar el portafolio desde Vercel Blob:', err))
+      .finally(() => {
         if (!cancelled) setRemoteReady(true);
-      })
-      .catch((err) => console.warn('No se pudo cargar el portafolio desde Supabase:', err));
+      });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Autoguardado en Supabase cuando el administrador hace cambios
+  // Autoguardado en Vercel Blob cuando el administrador hace cambios
   const syncRef = useRef<() => Promise<boolean>>(async () => false);
   useEffect(() => {
     if (!remoteReady || !isAdmin) return;
@@ -566,28 +562,19 @@ export default function App() {
     };
   }, [isMobile]);
 
-  // Validate administrator credentials on the server and establish an HttpOnly session.
-  const handleAdminLogin = async (e: React.FormEvent) => {
+  // Admin PIN verification
+  const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const response = await fetch('/api/admin-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: adminPassword }),
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok || data?.authenticated !== true) {
-        throw new Error(data?.error || 'No se pudo iniciar sesión.');
-      }
+    if (enteredPin.trim() === OWNER_PIN) {
       setIsAdmin(true);
-      setShowAdminLoginModal(false);
-      setAdminPassword('');
-      setAdminLoginError(false);
+      sessionStorage.setItem('sr_admin_auth', 'true');
+      setShowPinModal(false);
+      setEnteredPin('');
+      setPinError(false);
       setActiveModal('admin');
-    } catch (error) {
-      console.error('No se pudo iniciar sesión de administrador:', error);
-      setAdminLoginError(true);
-      setAdminPassword('');
+    } else {
+      setPinError(true);
+      setEnteredPin('');
     }
   };
 
@@ -595,24 +582,22 @@ export default function App() {
     if (isAdmin) {
       setActiveModal('admin');
     } else {
-      setAdminPassword('');
-      setAdminLoginError(false);
-      setShowAdminLoginModal(true);
+      setEnteredPin('');
+      setPinError(false);
+      setShowPinModal(true);
     }
   };
 
   const handleLogoutAdmin = () => {
     setIsAdmin(false);
+    sessionStorage.removeItem('sr_admin_auth');
     setActiveModal(null);
-    fetch('/api/admin-session', { method: 'DELETE' }).catch((error) =>
-      console.error('No se pudo cerrar la sesión de administrador:', error)
-    );
   };
 
-  // Upload images and videos to Cloudinary; store PDF files in Supabase Storage.
+  // Upload images and videos to Cloudinary; keep PDF files in Vercel Blob.
   const uploadSingleFile = async (
     file: File
-  ): Promise<{ media: ProjectMedia; storage: 'cloudinary' | 'supabase' }> => {
+  ): Promise<{ media: ProjectMedia; storage: 'cloudinary' | 'blob' }> => {
     let type: MediaType = 'foto';
     if (file.type.startsWith('video/')) {
       type = 'video';
@@ -724,76 +709,84 @@ export default function App() {
       };
     }
 
-    setUploadProgressText(`Subiendo PDF a Supabase: ${file.name}...`);
-    const ticketResponse = await fetch('/api/pdf-upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: file.name }),
-    });
-    const ticket: { uploadUrl?: string; url?: string; error?: string } | null =
-      await ticketResponse.json().catch(() => null);
-    if (
-      !ticketResponse.ok ||
-      !ticket ||
-      typeof ticket.uploadUrl !== 'string' ||
-      typeof ticket.url !== 'string'
-    ) {
-      throw new Error(
-        ticket?.error ||
-          `No se pudo preparar la subida del PDF (HTTP ${ticketResponse.status}).`
-      );
-    }
-    const { uploadUrl, url: pdfUrl } = ticket;
+    const activeToken = (
+      customBlobToken || localStorage.getItem('sr_vercel_blob_token') || ''
+    ).trim();
+    let blobUploadError: unknown;
 
-    await new Promise<void>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', uploadUrl);
-      xhr.setRequestHeader('Content-Type', 'application/pdf');
-      xhr.setRequestHeader('Cache-Control', 'max-age=31536000');
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          setUploadProgressText(
-            `Subiendo PDF a Supabase: ${Math.round((event.loaded / event.total) * 100)}%`
-          );
-        }
+    try {
+      const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await upload(`proyectos/${cleanFileName}`, file, {
+        access: 'public',
+        handleUploadUrl: '/api/upload',
+        multipart: file.size > 20 * 1024 * 1024,
+        headers: activeToken ? { 'x-blob-token': activeToken } : undefined,
+        onUploadProgress: ({ percentage }) => {
+          setUploadProgressText(`Subiendo PDF a Vercel Blob: ${Math.round(percentage)}%`);
+        },
+      });
+      return {
+        media: {
+          id: Date.now().toString() + Math.random().toString().slice(2, 6),
+          type,
+          name: file.name,
+          url: blob.url,
+          size: sizeInMb,
+        },
+        storage: 'blob',
       };
-      xhr.onload = () => {
-        let response: { message?: string; error?: string };
+    } catch (clientUploadErr) {
+      blobUploadError = clientUploadErr;
+      if (file.size <= 4.5 * 1024 * 1024) {
         try {
-          response = JSON.parse(xhr.responseText);
-        } catch {
-          response = {};
+          const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+          const serverRes = await fetch(
+            `/api/upload?filename=${encodeURIComponent(cleanFileName)}`,
+            {
+              method: 'POST',
+              headers: activeToken ? { 'x-blob-token': activeToken } : undefined,
+              body: file,
+            }
+          );
+          const serverResponse = await serverRes.json().catch(() => null);
+          if (serverRes.ok && serverResponse?.url) {
+            return {
+              media: {
+                id: Date.now().toString() + Math.random().toString().slice(2, 6),
+                type,
+                name: file.name,
+                url: serverResponse.url,
+                size: sizeInMb,
+              },
+              storage: 'blob',
+            };
+          }
+          if (serverResponse?.error) {
+            blobUploadError = new Error(serverResponse.error);
+          }
+        } catch (serverErr) {
+          blobUploadError = serverErr;
         }
-        if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new Error(response.message || response.error || `No se pudo guardar el PDF (HTTP ${xhr.status}).`));
-          return;
-        }
-        resolve();
-      };
-      xhr.onerror = () => reject(new Error('No se pudo conectar con Supabase Storage.'));
-      xhr.send(file);
-    });
+      }
+    }
 
-    return {
-      media: {
-        id: Date.now().toString() + Math.random().toString().slice(2, 6),
-        type,
-        name: file.name,
-        url: pdfUrl,
-        size: sizeInMb,
-      },
-      storage: 'supabase',
-    };
+    throw new Error(
+      `No se pudo guardar ${file.name} en Vercel Blob: ${
+        blobUploadError instanceof Error
+          ? blobUploadError.message
+          : 'comprueba el token y el espacio disponible.'
+      }`
+    );
   };
 
-  // Upload project media to Cloudinary or Supabase according to file type.
+  // Upload project media to Cloudinary or Vercel Blob according to file type.
   const processFiles = async (files: FileList): Promise<ProjectMedia[]> => {
     setIsUploadingMedia(true);
     setUploadProgressText(`Preparando subida de ${files.length} archivo(s)...`);
     const results: ProjectMedia[] = [];
     const errors: string[] = [];
     let cloudinaryCount = 0;
-    let supabaseCount = 0;
+    let blobCount = 0;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -804,7 +797,7 @@ export default function App() {
         const { media, storage } = await uploadSingleFile(file);
         results.push(media);
         if (storage === 'cloudinary') cloudinaryCount++;
-        else supabaseCount++;
+        else blobCount++;
       } catch (error) {
         errors.push(
           error instanceof Error ? error.message : `Error al subir ${file.name}.`
@@ -819,7 +812,7 @@ export default function App() {
     if (cloudinaryCount) {
       messages.push(`${cloudinaryCount} archivo(s) guardado(s) en Cloudinary`);
     }
-    if (supabaseCount) messages.push(`${supabaseCount} PDF(s) guardado(s) en Supabase Storage`);
+    if (blobCount) messages.push(`${blobCount} PDF(s) guardado(s) en Vercel Blob`);
     messages.push(...errors);
     setBlobUploadNotice(messages.length ? messages.join('. ') : 'No se guardó ningún archivo.');
     setBlobUploadHasError(errors.length > 0 || messages.length === 0);
@@ -828,12 +821,22 @@ export default function App() {
     return results;
   };
 
-  // Sincronización automática de proyectos en Supabase
-  const savePortfolioToSupabase = async (customProjects?: Project[]) => {
-    setStorageSyncStatus('syncing');
-    setStorageSyncMessage('Guardando datos en Supabase...');
-    setProjectSaveMessage('Cambios guardados localmente; sincronizando con Supabase...');
+  // Sincronización automática de proyectos en la nube de Vercel Blob
+  const syncPortfolioToVercelBlob = async (customProjects?: Project[]) => {
+    setBlobSyncStatus('syncing');
+    setBlobSyncMessage('Enviando datos y sincronizando con Vercel Blob...');
+    setProjectSaveMessage('Cambios guardados localmente; sincronizando con Vercel Blob...');
     try {
+      const activeToken = (
+        customBlobToken || localStorage.getItem('sr_vercel_blob_token') || ''
+      ).trim();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (activeToken) {
+        headers['x-blob-token'] = activeToken;
+      }
+
       const payload = {
         projects: customProjects || projects,
         categories,
@@ -841,16 +844,14 @@ export default function App() {
         cvPdfUrl,
         updatedAt: new Date().toISOString(),
       };
-      const res = await fetch('/api/portfolio', {
+      const res = await fetch('/api/projects', {
         method: 'POST',
-        headers: {
-        'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify(payload),
       });
 
       const responseText = await res.text();
-      let json: { success?: boolean; error?: string } = {};
+      let json: { success?: boolean; error?: string; url?: string } = {};
       try {
         json = JSON.parse(responseText);
       } catch {
@@ -867,7 +868,7 @@ export default function App() {
           json.error ||
             (responseError && responseError !== '[object Object]'
               ? `Error HTTP ${res.status}: ${responseError}`
-              : `Error HTTP ${res.status} al sincronizar con Supabase`)
+              : `Error HTTP ${res.status} al sincronizar con Vercel Blob`)
         );
       }
 
@@ -876,41 +877,56 @@ export default function App() {
         minute: '2-digit',
         second: '2-digit',
       });
-      setStorageSyncStatus('synced');
-      setRemoteReady(true);
-      setStorageSyncMessage(
-        `🟢 ¡Portafolio guardado en Supabase a las ${timeStr}! Los cambios ya están disponibles en la nube.`
+      setBlobSyncStatus('synced');
+      setBlobSyncMessage(
+        `🟢 ¡Portfolio sincronizado con éxito en Vercel Blob a las ${timeStr}! Los cambios ya están disponibles en la nube.`
       );
-      setProjectSaveMessage('Cambios guardados en este navegador y sincronizados con Supabase.');
+      setProjectSaveMessage('Cambios guardados en este navegador y sincronizados con Vercel Blob.');
       setLastSyncedTime(timeStr);
-      localStorage.setItem('sr_supabase_last_synced', timeStr);
+      localStorage.setItem('sr_blob_last_synced', timeStr);
+      if (json.url) {
+        setLastSyncedUrl(json.url);
+        localStorage.setItem('sr_blob_last_url', json.url);
+      }
       return true;
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'error desconocido';
-      setStorageSyncStatus('error');
+    } catch (err: any) {
+      setBlobSyncStatus('error');
       setProjectSaveMessage(
-        `Cambios guardados solo en este navegador; no se pudieron sincronizar con Supabase: ${message}.`
+        `Cambios guardados solo en este navegador; no se pudieron sincronizar con Vercel Blob: ${err.message || 'error desconocido'}.`
       );
-      setStorageSyncMessage(
-        `❌ Error al sincronizar: ${message}`
+      setBlobSyncMessage(
+        `❌ Error al sincronizar: ${err.message || 'No se pudo guardar en Vercel Blob. Configura el token o actívalo en vercel.com.'}`
       );
       return false;
     }
   };
 
-  syncRef.current = () => savePortfolioToSupabase();
+  syncRef.current = () => syncPortfolioToVercelBlob();
 
-  // Comprobar estado de conexión con Supabase
-  const checkSupabaseStatus = async () => {
-    setStorageSyncStatus('checking');
-    setStorageSyncMessage('Comprobando conexión con Supabase...');
+  // Comprobar estado de conexión con Vercel Blob
+  const checkVercelBlobStatus = async (overrideToken?: unknown) => {
+    setBlobSyncStatus('checking');
+    setBlobSyncMessage('Comprobando conexión con Vercel Blob...');
     try {
-      const res = await fetch('/api/portfolio', { cache: 'no-store' });
+      const activeToken =
+        typeof overrideToken === 'string'
+          ? overrideToken.trim()
+          : (customBlobToken || localStorage.getItem('sr_vercel_blob_token') || '').trim();
+
+      const headers: Record<string, string> = {};
+      if (activeToken) {
+        headers['x-blob-token'] = activeToken;
+      }
+
+      const res = await fetch('/api/projects', { headers, cache: 'no-store' });
       const json = await res.json().catch(() => null);
 
       if (!res.ok || (json && json.error)) {
-        setStorageSyncStatus('error');
-        setStorageSyncMessage(json?.error || `Error de conexión (Código ${res.status}).`);
+        setBlobSyncStatus('error');
+        setBlobSyncMessage(
+          json?.error ||
+            `Error de conexión (Código ${res.status}). Verifica que tu token sea válido.`
+        );
         return;
       }
 
@@ -937,20 +953,61 @@ export default function App() {
             setCvPdfUrl(data.cvPdfUrl);
           }
         }
-        setStorageSyncStatus('connected');
-        setRemoteReady(true);
-        setStorageSyncMessage(
-          json.message || 'Conexión exitosa con Supabase.'
+        setBlobSyncStatus('connected');
+        setBlobSyncMessage(
+          json.message ||
+            '🟢 ¡Conexión exitosa a tu Vercel Blob Store! Tus fotos, vídeos y datos se guardarán automáticamente en la nube.'
+        );
+        if (json.url) {
+          setLastSyncedUrl(json.url);
+          localStorage.setItem('sr_blob_last_url', json.url);
+        }
+      } else if (json && json.warning) {
+        setBlobSyncStatus('not_connected');
+        setBlobSyncMessage(
+          '🟡 Pendiente de vincular: No se detectó BLOB_READ_WRITE_TOKEN en el entorno ni en el panel. Pega tu token abajo para activarlo de inmediato o crea el Blob Store en Vercel.'
         );
       } else {
-        setStorageSyncStatus('not_connected');
-        setStorageSyncMessage(json?.error || 'Supabase todavía no está configurado.');
+        setBlobSyncStatus('not_connected');
+        setBlobSyncMessage(
+          json?.message ||
+            '⚪ Vercel Blob no conectado. Configura tu token para sincronización en la nube.'
+        );
       }
-    } catch (err: unknown) {
-      setStorageSyncStatus('error');
-      setStorageSyncMessage(
-        `Error de red al consultar Supabase: ${err instanceof Error ? err.message : 'Error de conexión'}`
+    } catch (err: any) {
+      setBlobSyncStatus('error');
+      setBlobSyncMessage(
+        `Error de red al consultar /api/projects: ${err.message || 'Error de conexión'}`
       );
+    }
+  };
+
+  // Guardar Token personalizado de Vercel Blob
+  const handleSaveCustomToken = (tokenToSave?: string) => {
+    const val = typeof tokenToSave === 'string' ? tokenToSave : blobTokenInput;
+    const clean = val
+      .replace(/^BLOB_READ_WRITE_TOKEN\s*=\s*/i, '')
+      .replace(/^['"]|['"]$/g, '')
+      .trim();
+
+    if (clean && clean.startsWith('store_')) {
+      setBlobSyncStatus('error');
+      setBlobSyncMessage(
+        `⚠️ Has ingresado el Store ID ("${clean}"). Vercel Blob requiere el token secreto que empieza por "vercel_blob_rw_...". Lo encuentras en Vercel > tu Blob Store > pestaña Settings > Tokens.`
+      );
+      setBlobTokenInput(clean);
+      return;
+    }
+
+    setCustomBlobToken(clean);
+    setBlobTokenInput(clean);
+    localStorage.setItem('sr_vercel_blob_token', clean);
+    if (clean) {
+      checkVercelBlobStatus(clean);
+    } else {
+      setBlobSyncStatus('not_connected');
+      setBlobSyncMessage('Token eliminado. Se utilizará la variable de entorno de Vercel si existe.');
+      checkVercelBlobStatus('');
     }
   };
 
@@ -1026,24 +1083,24 @@ export default function App() {
     });
   };
 
+  // Export & Vercel Handlers
+  const handleCopyProjectsConfig = () => {
+    const code = `const INITIAL_PROJECTS: Project[] = ${JSON.stringify(projects, null, 2)};`;
+    navigator.clipboard.writeText(code);
+    setCopiedConfigNotice(true);
+    setTimeout(() => setCopiedConfigNotice(false), 3000);
+  };
+
   const handleDownloadProjectsJson = () => {
-    const backup = {
-      projects,
-      categories,
-      heroTexts,
-      cvPdfUrl,
-      updatedAt: new Date().toISOString(),
-    };
-    const backupUrl = URL.createObjectURL(
-      new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
-    );
+    const dataStr =
+      'data:text/json;charset=utf-8,' +
+      encodeURIComponent(JSON.stringify(projects, null, 2));
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.href = backupUrl;
-    downloadAnchor.download = 'respaldo-portafolio-samuel-restrepo.json';
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', 'proyectos-samuel-restrepo.json');
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
-    setTimeout(() => URL.revokeObjectURL(backupUrl), 1000);
   };
 
   const handleImportProjectsJson = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1053,61 +1110,16 @@ export default function App() {
     reader.onload = (event) => {
       try {
         const imported = JSON.parse(event.target?.result as string);
-        const backup: Record<string, unknown> =
-          typeof imported === 'object' && imported !== null && !Array.isArray(imported)
-            ? (imported as Record<string, unknown>)
-            : { projects: imported };
-        if (!Array.isArray(backup.projects)) {
-          throw new Error('El archivo no contiene una lista válida de proyectos.');
+        if (Array.isArray(imported)) {
+          const normalized = imported.map((project: ProjectWithLegacyCategory) =>
+            normalizeProjectCategories(project)
+          );
+          setProjects(normalized);
+          localStorage.setItem('sr_projects', JSON.stringify(normalized));
+          alert('¡Proyectos importados con éxito!');
         }
-        const normalized = backup.projects.map((project: ProjectWithLegacyCategory) =>
-          normalizeProjectCategories(project)
-        );
-        setProjects(normalized);
-        localStorage.setItem('sr_projects', JSON.stringify(normalized));
-
-        if (
-          Array.isArray(backup.categories) &&
-          backup.categories.every((category: unknown) => typeof category === 'string') &&
-          backup.categories.length
-        ) {
-          const importedCategories = backup.categories as string[];
-          setCategories(importedCategories);
-          localStorage.setItem('sr_categories', JSON.stringify(importedCategories));
-        }
-
-        if (
-          typeof backup.heroTexts === 'object' &&
-          backup.heroTexts !== null &&
-          !Array.isArray(backup.heroTexts)
-        ) {
-          const importedTexts = backup.heroTexts as Record<string, unknown>;
-          const merged = { ...DEFAULT_HERO_TEXTS };
-          for (const key of Object.keys(DEFAULT_HERO_TEXTS) as Array<
-            keyof typeof DEFAULT_HERO_TEXTS
-          >) {
-            if (typeof importedTexts[key] === 'string') {
-              merged[key] = importedTexts[key];
-            }
-          }
-          setHeroTexts(merged);
-          setEditHeroTexts(merged);
-          localStorage.setItem('sr_hero_texts', JSON.stringify(merged));
-        }
-
-        if (typeof backup.cvPdfUrl === 'string') {
-          setCvPdfUrl(backup.cvPdfUrl);
-          localStorage.setItem('sr_cv_pdf_url', backup.cvPdfUrl);
-        }
-        alert('¡Respaldo del portafolio importado con éxito!');
-      } catch (error) {
-        alert(
-          error instanceof Error
-            ? error.message
-            : 'Error al leer el archivo JSON. Verifica el formato.'
-        );
-      } finally {
-        e.target.value = '';
+      } catch {
+        alert('Error al leer el archivo JSON. Verifica el formato.');
       }
     };
     reader.readAsText(file);
@@ -1523,16 +1535,16 @@ export default function App() {
         </div>
       </main>
 
-      {/* Administrator password authentication */}
-      {showAdminLoginModal && (
+      {/* PIN AUTHENTICATION MODAL (Acceso oculto con PIN: 7374) */}
+      {showPinModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
           <div className="relative w-full max-w-sm bg-neutral-950 border border-white/20 rounded-2xl p-6 sm:p-7 text-white shadow-2xl animate-fade-in text-center">
             <button
               type="button"
               onClick={() => {
-                setShowAdminLoginModal(false);
-                setAdminPassword('');
-                setAdminLoginError(false);
+                setShowPinModal(false);
+                setEnteredPin('');
+                setPinError(false);
               }}
               className="absolute top-4 right-4 text-white/50 hover:text-white p-1 rounded-full cursor-pointer text-sm"
               aria-label="Cerrar"
@@ -1551,31 +1563,30 @@ export default function App() {
               Acceso de Administrador
             </h3>
             <p className="text-xs text-white/60 mb-5">
-              Panel reservado para Samuel Restrepo. Ingresa tu PIN de administrador.
+              Panel reservado para Samuel Restrepo. Ingresa tu PIN de 4 dígitos.
             </p>
 
-            <form onSubmit={handleAdminLogin} className="space-y-4">
+            <form onSubmit={handlePinSubmit} className="space-y-4">
               <div>
                 <input
                   type="password"
+                  maxLength={6}
                   autoFocus
-                  inputMode="numeric"
-                  maxLength={4}
                   placeholder="PIN..."
-                  value={adminPassword}
+                  value={enteredPin}
                   onChange={(e) => {
-                    setAdminPassword(e.target.value);
-                    setAdminLoginError(false);
+                    setEnteredPin(e.target.value);
+                    setPinError(false);
                   }}
-                  className={`w-full max-w-xs mx-auto text-center text-base font-mono py-2 px-3 bg-neutral-900 border rounded-xl text-white focus:outline-none transition-colors ${
-                    adminLoginError
+                  className={`w-36 mx-auto text-center tracking-[0.5em] text-2xl font-mono py-2 px-3 bg-neutral-900 border rounded-xl text-white focus:outline-none transition-colors ${
+                    pinError
                       ? 'border-red-500 bg-red-950/20'
                       : 'border-white/30 focus:border-white'
                   }`}
                 />
-                {adminLoginError && (
+                {pinError && (
                   <p className="text-xs text-red-400 mt-2 font-medium">
-                    No se pudo iniciar sesión. Verifica la contraseña e inténtalo de nuevo.
+                    PIN incorrecto. Inténtalo de nuevo.
                   </p>
                 )}
               </div>
@@ -1583,7 +1594,7 @@ export default function App() {
               <div className="flex gap-2 justify-center pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowAdminLoginModal(false)}
+                  onClick={() => setShowPinModal(false)}
                   className="px-4 py-2 rounded-full text-xs text-white/60 hover:text-white cursor-pointer"
                 >
                   Cancelar
@@ -1600,7 +1611,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ADMIN PANEL (autenticación de servidor) */}
+      {/* ADMIN PANEL (Exclusivo para el propietario con PIN: 7374) */}
       {activeModal === 'admin' && isAdmin && (
         <div className="fixed inset-0 z-40 bg-black/90 backdrop-blur-2xl flex flex-col text-white animate-fade-in overflow-hidden">
           {/* Header */}
@@ -1610,6 +1621,7 @@ export default function App() {
                 <span className="text-xs font-mono uppercase tracking-wider text-green-400 bg-green-950/50 border border-green-800/60 px-2 py-0.5 rounded-full">
                   ● Propietario Autenticado
                 </span>
+                <span className="text-xs text-white/40">PIN: 7374</span>
               </div>
               <h2
                 className="text-2xl sm:text-3xl font-medium tracking-tight mt-1"
@@ -1697,11 +1709,11 @@ export default function App() {
             <button
               type="button"
               onClick={() => {
-                setAdminTab('storage');
-                if (storageSyncStatus === 'idle') checkSupabaseStatus();
+                setAdminTab('blob');
+                if (blobSyncStatus === 'idle') checkVercelBlobStatus();
               }}
               className={`text-sm pb-2 border-b-2 font-medium transition-colors cursor-pointer ${
-                adminTab === 'storage'
+                adminTab === 'blob'
                   ? 'border-white text-white'
                   : 'border-transparent text-white/50 hover:text-white'
               }`}
@@ -1725,9 +1737,9 @@ export default function App() {
                   <div
                     role="status"
                     className={`rounded-lg border px-3 py-2.5 text-xs ${
-                      storageSyncStatus === 'error'
+                      blobSyncStatus === 'error'
                         ? 'border-red-700/60 bg-red-950/50 text-red-200'
-                        : storageSyncStatus === 'syncing'
+                        : blobSyncStatus === 'syncing'
                           ? 'border-amber-700/60 bg-amber-950/50 text-amber-200'
                           : 'border-emerald-700/60 bg-emerald-950/50 text-emerald-200'
                     }`}
@@ -2047,13 +2059,13 @@ export default function App() {
                         const file = e.target.files?.[0];
                         if (file) {
                           setIsUploadingMedia(true);
-                          setUploadProgressText(`Subiendo CV a Supabase Storage: ${file.name}...`);
+                          setUploadProgressText(`Subiendo CV a Vercel Blob: ${file.name}...`);
                           try {
                             const { media } = await uploadSingleFile(file);
                             setCvPdfUrl(media.url);
                             setBlobUploadHasError(false);
                             setBlobUploadNotice(
-                              '✓ ¡CV PDF guardado permanentemente en Supabase Storage!'
+                              '✓ ¡CV PDF guardado permanentemente en Vercel Blob!'
                             );
                             setTimeout(() => setBlobUploadNotice(''), 4500);
                           } catch (err) {
@@ -2062,7 +2074,7 @@ export default function App() {
                             setBlobUploadNotice(
                               err instanceof Error
                                 ? err.message
-                                : 'No se pudo guardar el CV en Supabase Storage.'
+                                : 'No se pudo guardar el CV en Vercel Blob.'
                             );
                           } finally {
                             setIsUploadingMedia(false);
@@ -2078,7 +2090,7 @@ export default function App() {
                     <div className="p-3 bg-neutral-900 border border-white/20 rounded-xl flex items-center gap-2.5 text-xs text-white mb-3 animate-pulse">
                       <span className="text-base animate-spin">⏳</span>
                       <div>
-                        <p className="font-medium text-white">Subiendo CV a Supabase Storage...</p>
+                        <p className="font-medium text-white">Subiendo CV a Vercel Blob...</p>
                         <p className="text-[11px] text-white/60 font-mono">{uploadProgressText}</p>
                       </div>
                     </div>
@@ -2115,97 +2127,417 @@ export default function App() {
               </div>
             )}
 
-            {adminTab === 'storage' && (
-              <div className="max-w-4xl space-y-5">
-                <div className="bg-neutral-900 border border-white/15 rounded-2xl p-5 sm:p-6 space-y-3">
-                  <h3 className="text-base font-semibold text-white">Almacenamiento del portafolio</h3>
-                  <p className="text-sm text-white/70 leading-relaxed">
-                    Los proyectos, categorías y textos se guardan en Supabase. Los PDF y el CV se almacenan en Supabase Storage; las fotos y videos siguen en Cloudinary.
-                  </p>
-                  <div className="flex flex-wrap gap-2 text-[11px] font-mono">
-                    <code className="rounded bg-black/50 px-2 py-1">SUPABASE_URL</code>
-                    <code className="rounded bg-black/50 px-2 py-1">SUPABASE_SERVICE_ROLE_KEY</code>
-                    <code className="rounded bg-black/50 px-2 py-1">PORTFOLIO_ADMIN_PASSWORD</code>
+            {/* TAB: VERCEL BLOB (ALMACENAMIENTO AUTOMÁTICO EN LA NUBE) */}
+            {adminTab === 'blob' && (
+              <div className="max-w-4xl space-y-6">
+                {/* Banner Principal: Cómo funciona Vercel Blob */}
+                <div className="bg-gradient-to-r from-neutral-900 via-neutral-900 to-black border border-white/20 rounded-2xl p-6 sm:p-7 shadow-2xl relative overflow-hidden">
+                  <div className="flex items-center gap-3 mb-2.5">
+                    <span className="text-3xl">☁️</span>
+                    <div>
+                      <h3 className="text-base sm:text-lg font-medium text-white tracking-tight">
+                        ¿Cómo funciona Vercel Blob con tu página?
+                      </h3>
+                      <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/50 px-2 py-0.5 rounded-full inline-block mt-1">
+                        ✓ Integración nativa ya implementada en el código
+                      </span>
+                    </div>
                   </div>
-                  <p className="text-xs text-amber-200/90">
-                    Configura esas variables como variables de entorno de servidor en Vercel y ejecuta <code>supabase/setup.sql</code> en el SQL Editor de tu proyecto Supabase. Después vuelve a desplegar.
+                  <p className="text-xs sm:text-sm text-white/80 leading-relaxed mt-2">
+                    <strong>Vercel Blob</strong> guarda el JSON del portafolio y los PDF, incluido el CV. Las fotos, videos y portadas se suben a <strong>Cloudinary</strong> para no consumir la cuota de medios de Blob.
                   </p>
                 </div>
 
-                <div className={`rounded-2xl border p-5 space-y-4 ${
-                  storageSyncStatus === 'error'
-                    ? 'border-red-500/40 bg-red-950/20'
-                    : storageSyncStatus === 'synced' || storageSyncStatus === 'connected'
-                      ? 'border-emerald-500/40 bg-emerald-950/20'
-                      : 'border-white/15 bg-neutral-900'
-                }`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-wider text-white/50">Estado de Supabase</p>
-                      <p role="status" className="mt-1 text-sm text-white">
-                        {storageSyncMessage || 'Aún no se ha comprobado la conexión.'}
-                      </p>
-                      {lastSyncedTime && (
-                        <p className="mt-1 text-xs text-white/50">Último guardado: {lastSyncedTime}</p>
-                      )}
+                <div className="bg-neutral-900 border border-amber-500/30 rounded-xl p-5 space-y-3">
+                  <h4 className="text-sm font-semibold text-white">
+                    Configurar Cloudinary para fotos y videos
+                  </h4>
+                  <p className="text-xs text-white/70 leading-relaxed">
+                    En Vercel, abre tu proyecto y entra a <strong>Settings → Environment Variables</strong>. Agrega las tres variables de abajo usando los valores de tu cuenta Cloudinary; luego vuelve a desplegar. No pegues el API Secret en esta página ni en el código.
+                  </p>
+                  <div className="flex flex-wrap gap-2 text-[11px] font-mono text-amber-200">
+                    <code className="rounded bg-black/50 px-2 py-1">CLOUDINARY_CLOUD_NAME</code>
+                    <code className="rounded bg-black/50 px-2 py-1">CLOUDINARY_API_KEY</code>
+                    <code className="rounded bg-black/50 px-2 py-1">CLOUDINARY_API_SECRET</code>
+                  </div>
+                  <p className="text-xs text-white/70 leading-relaxed">
+                    Los PDF y el CV siguen usando Vercel Blob. Si Blob ya llegó al límite, elimina allí archivos multimedia antiguos solo después de comprobar que los proyectos ya apuntan a sus nuevas URL de Cloudinary; deja intacto <code className="text-white/90">portfolio-data.json</code>.
+                  </p>
+                </div>
+
+                {/* Monitor de Estado y Conexión en Tiempo Real */}
+                <div
+                  className={`border rounded-2xl p-5 sm:p-6 space-y-5 transition-all shadow-xl ${
+                    blobSyncStatus === 'connected' || blobSyncStatus === 'synced'
+                      ? 'bg-neutral-900/90 border-emerald-500/40 shadow-emerald-950/20'
+                      : blobSyncStatus === 'error'
+                        ? 'bg-neutral-900/90 border-red-500/40 shadow-red-950/20'
+                        : blobSyncStatus === 'checking' || blobSyncStatus === 'syncing'
+                          ? 'bg-neutral-900/90 border-amber-500/40 shadow-amber-950/20'
+                          : 'bg-neutral-900/90 border-white/15'
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-white/50">
+                          Monitor de Estado en Vivo
+                        </span>
+                        {customBlobToken && (
+                          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/70 border border-emerald-800/40 px-2 py-0.2 rounded-full">
+                            Token configurado
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className={`w-3.5 h-3.5 rounded-full shrink-0 ${
+                            blobSyncStatus === 'connected' || blobSyncStatus === 'synced'
+                              ? 'bg-emerald-400 animate-pulse'
+                              : blobSyncStatus === 'syncing' || blobSyncStatus === 'checking'
+                                ? 'bg-amber-400 animate-spin'
+                                : blobSyncStatus === 'error'
+                                  ? 'bg-red-500'
+                                  : 'bg-amber-500'
+                          }`}
+                        />
+                        <h4 className="text-sm sm:text-base font-semibold text-white">
+                          {blobSyncStatus === 'connected'
+                            ? '🟢 Conectado con Vercel Blob (Almacenamiento Activo)'
+                            : blobSyncStatus === 'synced'
+                              ? '🟢 ¡Portfolio sincronizado con éxito en la nube!'
+                              : blobSyncStatus === 'syncing'
+                                ? '⏳ Sincronizando datos con Vercel Blob...'
+                                : blobSyncStatus === 'checking'
+                                  ? '⏳ Comprobando conexión con Vercel Blob...'
+                                  : blobSyncStatus === 'error'
+                                    ? '🔴 Error de conexión con Vercel Blob'
+                                    : '🟡 Pendiente de conexión (Token requerido para pruebas)'}
+                        </h4>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
+
+                    <div className="flex flex-wrap gap-2.5 shrink-0">
                       <button
                         type="button"
-                        onClick={() => checkSupabaseStatus()}
-                        disabled={storageSyncStatus === 'checking' || storageSyncStatus === 'syncing'}
-                        className="rounded-lg border border-white/20 px-3 py-2 text-xs text-white hover:bg-white/10 disabled:opacity-50"
+                        onClick={() => checkVercelBlobStatus()}
+                        disabled={blobSyncStatus === 'checking' || blobSyncStatus === 'syncing'}
+                        className="bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer border border-white/15 flex items-center gap-2 font-medium"
                       >
-                        Comprobar conexión
+                        <span className={blobSyncStatus === 'checking' ? 'animate-spin' : ''}>
+                          🔄
+                        </span>
+                        <span>
+                          {blobSyncStatus === 'checking'
+                            ? 'Comprobando...'
+                            : 'Comprobar conexión'}
+                        </span>
                       </button>
                       <button
                         type="button"
-                        onClick={() => savePortfolioToSupabase()}
-                        disabled={storageSyncStatus === 'checking' || storageSyncStatus === 'syncing'}
-                        className="rounded-lg bg-white px-3 py-2 text-xs font-medium text-black hover:bg-white/90 disabled:opacity-50"
+                        onClick={() => syncPortfolioToVercelBlob()}
+                        disabled={blobSyncStatus === 'checking' || blobSyncStatus === 'syncing'}
+                        className="bg-white text-black hover:bg-white/90 disabled:opacity-50 text-xs font-semibold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-lg flex items-center gap-2"
                       >
-                        Guardar ahora
+                        <span className={blobSyncStatus === 'syncing' ? 'animate-spin' : ''}>
+                          ☁️
+                        </span>
+                        <span>
+                          {blobSyncStatus === 'syncing'
+                            ? 'Sincronizando...'
+                            : 'Sincronizar proyectos ahora'}
+                        </span>
                       </button>
                     </div>
                   </div>
-                  {projectSaveMessage && (
-                    <p className="border-t border-white/10 pt-3 text-xs text-white/80">{projectSaveMessage}</p>
+
+                  {/* Mensaje detallado del servidor */}
+                  {blobSyncMessage && (
+                    <div
+                      className={`p-3.5 rounded-xl text-xs font-mono border leading-relaxed ${
+                        blobSyncStatus === 'connected' || blobSyncStatus === 'synced'
+                          ? 'bg-emerald-950/40 border-emerald-800/50 text-emerald-200'
+                          : blobSyncStatus === 'error'
+                            ? 'bg-red-950/40 border-red-800/50 text-red-200'
+                            : blobSyncStatus === 'checking' || blobSyncStatus === 'syncing'
+                              ? 'bg-amber-950/40 border-amber-800/50 text-amber-200'
+                              : 'bg-black/50 border-white/10 text-white/80'
+                      }`}
+                    >
+                      {blobSyncMessage}
+                    </div>
+                  )}
+
+                  {/* Fila de metadatos de sincronización */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-white/10 text-xs">
+                    <div className="bg-black/30 p-2.5 rounded-lg border border-white/5">
+                      <span className="text-[10px] font-mono uppercase text-white/50 block">
+                        Destino en la nube
+                      </span>
+                      <span className="font-mono text-white/90 truncate block mt-0.5">
+                        portfolio-data.json
+                      </span>
+                    </div>
+                    <div className="bg-black/30 p-2.5 rounded-lg border border-white/5">
+                      <span className="text-[10px] font-mono uppercase text-white/50 block">
+                        Última sincronización
+                      </span>
+                      <span className="font-mono text-white/90 truncate block mt-0.5">
+                        {lastSyncedTime ? `Hoy a las ${lastSyncedTime}` : 'Sin registrar'}
+                      </span>
+                    </div>
+                    <div className="bg-black/30 p-2.5 rounded-lg border border-white/5">
+                      <span className="text-[10px] font-mono uppercase text-white/50 block">
+                        Enlace de datos CDN
+                      </span>
+                      {lastSyncedUrl ? (
+                        <a
+                          href={lastSyncedUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-emerald-400 hover:underline truncate block mt-0.5"
+                        >
+                          Ver JSON público ↗
+                        </a>
+                      ) : (
+                        <span className="font-mono text-white/40 block mt-0.5">
+                          Disponible tras sincronizar
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Gestor y Configuración del Token de Vercel Blob */}
+                <div className="bg-neutral-900 border border-white/15 rounded-xl p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                    <div>
+                      <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                        <span>🔑</span>
+                        <span>Token de Vercel Blob (BLOB_READ_WRITE_TOKEN)</span>
+                      </h4>
+                      <p className="text-xs text-white/60 mt-0.5">
+                        Conecta tu Blob Store directamente pegando tu token aquí para probarlo ahora mismo.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowTokenInput(!showTokenInput)}
+                      className="text-xs text-emerald-400 hover:text-emerald-300 underline underline-offset-2 cursor-pointer self-start sm:self-auto"
+                    >
+                      {showTokenInput ? '✕ Ocultar configuración de token' : '⚙️ Configurar o cambiar token'}
+                    </button>
+                  </div>
+
+                  {showTokenInput && (
+                    <div className="p-4 bg-black/50 border border-white/10 rounded-xl space-y-3 animate-fade-in">
+                      <div className="flex justify-between items-center">
+                        <label className="block text-xs font-medium text-white/90">
+                          Pega tu token secreto (<code className="text-emerald-400">vercel_blob_rw_...</code>):
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowTokenChars(!showTokenChars)}
+                          className="text-[11px] text-white/50 hover:text-white cursor-pointer"
+                        >
+                          {showTokenChars ? '🙈 Ocultar' : '👁️ Ver caracteres'}
+                        </button>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type={showTokenChars ? 'text' : 'password'}
+                          value={blobTokenInput}
+                          onChange={(e) => setBlobTokenInput(e.target.value)}
+                          placeholder="vercel_blob_rw_..."
+                          className="flex-1 bg-neutral-950 border border-white/20 rounded-lg px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-white transition-colors"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveCustomToken()}
+                          className="bg-white text-black hover:bg-white/90 text-xs font-semibold px-4 py-2 rounded-lg transition-colors cursor-pointer shrink-0 shadow-sm"
+                        >
+                          Guardar y Comprobar
+                        </button>
+                        {customBlobToken && (
+                          <button
+                            type="button"
+                            onClick={() => handleSaveCustomToken('')}
+                            className="bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs px-3 py-2 rounded-lg border border-red-500/30 transition-colors cursor-pointer shrink-0"
+                          >
+                            Eliminar
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="p-3 bg-white/5 border border-white/10 rounded-lg text-[11px] text-white/70 space-y-1.5">
+                        <p>
+                          💡 <strong>¿Dónde conseguirlo en Vercel?</strong>
+                        </p>
+                        <p className="leading-relaxed">
+                          1. En Vercel, entra a tu almacén Blob (<code className="text-white/90">store_5o1b0IlqxA778RJQ</code>).
+                          <br />
+                          2. Haz clic en la pestaña <strong>Settings</strong> ➔ menú lateral <strong>Tokens</strong>.
+                          <br />
+                          3. Si no hay ninguno, haz clic en <strong>Create Token</strong> (con permisos <em>Read and Write</em>).
+                          <br />
+                          4. Copia el token que empieza por <code className="text-emerald-400">vercel_blob_rw_...</code> y pégalo arriba.
+                        </p>
+                        <p className="text-amber-300/90 text-[10px] font-mono">
+                          ⚠️ Aviso: <code className="text-white">store_5o1b0IlqxA778RJQ</code> es el ID del almacén, no el token. Vercel Blob requiere el token secreto que inicia con <code className="text-emerald-300">vercel_blob_rw_</code>.
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                <div className="bg-neutral-900 border border-white/15 rounded-2xl p-5 space-y-3">
-                  <h4 className="text-sm font-medium text-white">Copia de seguridad</h4>
-                  <p className="text-xs text-white/60">
-                    El respaldo incluye proyectos, categorías, textos de inicio y la URL del CV. Descárgalo antes de configurar Supabase por primera vez.
+                {/* Flujo Automático Paso a Paso */}
+                <div className="bg-neutral-900 border border-white/15 rounded-xl p-5 sm:p-6">
+                  <h4 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                    <span>⚡</span>
+                    <span>¿Cómo se almacenan automáticamente tus archivos?</span>
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="bg-black/50 border border-white/10 rounded-xl p-4">
+                      <span className="text-xs font-mono text-emerald-400 font-semibold block mb-1">
+                        PASO 1 · Subida Directa
+                      </span>
+                      <p className="text-xs text-white/70 leading-relaxed">
+                        Las fotos, videos y portadas se firman en <code className="text-white/90">/api/cloudinary-signature</code> y se suben directamente a Cloudinary. Los PDF y el CV van a Vercel Blob.
+                      </p>
+                    </div>
+                    <div className="bg-black/50 border border-white/10 rounded-xl p-4">
+                      <span className="text-xs font-mono text-emerald-400 font-semibold block mb-1">
+                        PASO 2 · CDN Permanente
+                      </span>
+                      <p className="text-xs text-white/70 leading-relaxed">
+                        Cloudinary entrega URL públicas para las imágenes y videos; Blob conserva los documentos PDF.
+                      </p>
+                    </div>
+                    <div className="bg-black/50 border border-white/10 rounded-xl p-4">
+                      <span className="text-xs font-mono text-emerald-400 font-semibold block mb-1">
+                        PASO 3 · Guardado Global
+                      </span>
+                      <p className="text-xs text-white/70 leading-relaxed">
+                        Al guardar el proyecto, se actualiza automáticamente <code className="text-white/90">portfolio-data.json</code> en Vercel Blob. Todos los visitantes ven tus cambios al instante.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Los 3 Clics para Activar Vercel Blob en Vercel */}
+                <div className="bg-neutral-900 border border-white/15 rounded-xl p-5 sm:p-6 space-y-4">
+                  <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                    <span>🛠️</span>
+                    <span>Cómo activar Vercel Blob en tu cuenta de Vercel (Solo 3 clics)</span>
+                  </h4>
+                  <p className="text-xs text-white/70 leading-relaxed">
+                    Para guardar el JSON del portafolio y los PDF, conecta un Blob Store a tu proyecto Vercel. Las fotos, videos y portadas se guardan en Cloudinary.
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={handleDownloadProjectsJson}
-                      className="rounded-lg border border-white/20 px-3 py-2 text-xs text-white hover:bg-white/10"
-                    >
-                      Descargar copia JSON
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => jsonImportInputRef.current?.click()}
-                      className="rounded-lg border border-white/20 px-3 py-2 text-xs text-white hover:bg-white/10"
-                    >
-                      Importar copia JSON
-                    </button>
-                    <input
-                      ref={jsonImportInputRef}
-                      type="file"
-                      accept="application/json"
-                      onChange={handleImportProjectsJson}
-                      className="hidden"
-                    />
+
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3 bg-white/5 p-3.5 rounded-xl border border-white/10">
+                      <span className="w-6 h-6 rounded-full bg-white text-black text-xs font-bold flex items-center justify-center shrink-0">
+                        1
+                      </span>
+                      <div className="text-xs text-white/80">
+                        <strong>Entra a tu proyecto en Vercel:</strong> Ve a tu panel en <a href="https://vercel.com/dashboard" target="_blank" rel="noreferrer" className="text-white underline underline-offset-2">vercel.com</a> y abre el proyecto de la web de Samuel Restrepo.
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-3 bg-white/5 p-3.5 rounded-xl border border-white/10">
+                      <span className="w-6 h-6 rounded-full bg-white text-black text-xs font-bold flex items-center justify-center shrink-0">
+                        2
+                      </span>
+                      <div className="text-xs text-white/80">
+                        <strong>Crea el Blob Store:</strong> En el menú superior de tu proyecto, haz clic en la pestaña <strong>Storage</strong>. Luego haz clic en <strong>Create Database</strong> y elige <strong>Blob</strong>.
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-3 bg-white/5 p-3.5 rounded-xl border border-white/10">
+                      <span className="w-6 h-6 rounded-full bg-white text-black text-xs font-bold flex items-center justify-center shrink-0">
+                        3
+                      </span>
+                      <div className="text-xs text-white/80">
+                        <strong>Conectar automáticamente:</strong> Dale clic a <strong>Continue</strong>. Vercel conectará automáticamente el Blob a tu web inyectando la variable <code className="text-emerald-400 bg-black/40 px-1 py-0.5 rounded">BLOB_READ_WRITE_TOKEN</code>.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-emerald-950/40 border border-emerald-800/50 rounded-xl text-xs text-emerald-300">
+                    💡 <strong>¡Eso es todo!</strong> No necesitas tocar código, ni configurar bases de datos complejas. A partir de ese momento, cada vez que entres como administrador a tu página y subas fotos, vídeos o proyectos, se guardarán solos en la nube permanentemente.
+                  </div>
+                </div>
+
+                {/* Copia de Seguridad & Exportador */}
+                <div className="bg-neutral-900 border border-white/15 rounded-xl p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                    <div>
+                      <h4 className="text-sm font-medium uppercase font-mono tracking-wider text-white/70">
+                        Copias de seguridad & Exportador
+                      </h4>
+                      <p className="text-xs text-white/50">
+                        Descarga tus proyectos en un archivo JSON o copia el código para el archivo <code>src/App.tsx</code>.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleCopyProjectsConfig}
+                        className="bg-white text-black text-xs font-medium px-4 py-2 rounded-lg hover:bg-white/90 transition-colors cursor-pointer flex items-center gap-1.5 shadow"
+                      >
+                        <span>📋</span>
+                        <span>{copiedConfigNotice ? '¡Código Copiado!' : 'Copiar código para App.tsx'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleDownloadProjectsJson}
+                        className="border border-white/20 text-white/90 hover:text-white hover:bg-white/5 text-xs px-3.5 py-2 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <span>💾</span>
+                        <span>Descargar JSON</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => jsonImportInputRef.current?.click()}
+                        className="border border-white/20 text-white/70 hover:text-white hover:bg-white/5 text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <span>📥</span>
+                        <span>Importar JSON</span>
+                      </button>
+
+                      <input
+                        ref={jsonImportInputRef}
+                        type="file"
+                        accept="application/json"
+                        onChange={handleImportProjectsJson}
+                        className="hidden"
+                      />
+                    </div>
+                  </div>
+
+                  {copiedConfigNotice && (
+                    <div className="p-3 bg-green-950/60 border border-green-800 rounded-lg text-green-300 text-xs flex items-center gap-2">
+                      <span className="font-bold">✓</span>
+                      <span>
+                        ¡Código copiado al portapapeles! Reemplaza la constante <code>INITIAL_PROJECTS</code> en <code>src/App.tsx</code> con este contenido.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="relative">
+                    <pre className="bg-black/80 border border-white/10 rounded-lg p-4 text-[11px] font-mono text-white/70 max-h-48 overflow-auto whitespace-pre">
+                      {`const INITIAL_PROJECTS: Project[] = ${JSON.stringify(projects, null, 2)};`}
+                    </pre>
                   </div>
                 </div>
               </div>
             )}
-
-
           </div>
         </div>
       )}

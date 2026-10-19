@@ -2,7 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 
 // Sirve las funciones de /api (Vercel Functions) durante el desarrollo local,
 // ya que el servidor de Vite no las ejecuta por sí mismo.
@@ -44,7 +44,12 @@ function vercelApiDev(): Plugin {
   };
 }
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  if (env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_READ_WRITE_TOKEN) {
+    process.env.BLOB_READ_WRITE_TOKEN = env.BLOB_READ_WRITE_TOKEN;
+  }
+
   return {
     plugins: [react(), tailwindcss(), vercelApiDev()],
     resolve: {
